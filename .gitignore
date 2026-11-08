@@ -1,0 +1,16 @@
+.gradle/
+build/
+*/build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+captures/
+# offline data is built by tools/build_data.sh (too big for git)
+build-data/
+app/src/main/assets/mp.map
+app/src/main/assets/mp.graph
+app/src/main/assets/places.tsv
+app/src/main/assets/data_version.txt
+*.keystore
+*.jks

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- road -->
+    <path android:fillColor="#FF37474F" android:pathData="M44,86 L50,30 H58 L64,86 Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M53,38h2v8h-2zM53,52h2v9h-2zM52.5,67h3v10h-3z" />
+    <!-- pin -->
+    <path android:fillColor="#FFFF7043"
+        android:pathData="M54,18c-8,0 -14,6 -14,14c0,10 14,24 14,24s14,-14 14,-24c0,-8 -6,-14 -14,-14z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M54,27a5,5 0,1 0,0.01 0z" />
+</vector>

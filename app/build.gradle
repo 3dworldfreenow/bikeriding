@@ -1,0 +1,71 @@
+plugins {
+    id 'com.android.application'
+}
+
+def mapsforgeVersion = '0.25.0'
+
+android {
+    namespace 'com.bikeriding.mp'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.bikeriding.mp'
+        minSdk 24
+        targetSdk 35
+        versionCode (System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger()
+        versionName "1.0." + (System.getenv('GITHUB_RUN_NUMBER') ?: '0')
+    }
+
+    signingConfigs {
+        // Set these 4 secrets in GitHub to get a stable signing key (updates install over old version).
+        // Without them the release APK is signed with the debug key.
+        release {
+            def ks = System.getenv('SIGNING_KEYSTORE_FILE')
+            if (ks) {
+                storeFile file(ks)
+                storePassword System.getenv('SIGNING_STORE_PASSWORD')
+                keyAlias System.getenv('SIGNING_KEY_ALIAS')
+                keyPassword System.getenv('SIGNING_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig System.getenv('SIGNING_KEYSTORE_FILE') ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    // map + graph must stay uncompressed: the graph is memory-mapped straight out of the APK
+    androidResources {
+        noCompress 'map', 'graph'
+    }
+
+    packaging {
+        resources {
+            excludes += ['META-INF/LICENSE*', 'META-INF/NOTICE*']
+        }
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+dependencies {
+    implementation "org.mapsforge:mapsforge-core:$mapsforgeVersion"
+    implementation "org.mapsforge:mapsforge-map:$mapsforgeVersion"
+    implementation "org.mapsforge:mapsforge-map-reader:$mapsforgeVersion"
+    implementation "org.mapsforge:mapsforge-themes:$mapsforgeVersion"
+    implementation "org.mapsforge:mapsforge-map-android:$mapsforgeVersion"
+    implementation 'com.caverock:androidsvg:1.4'
+
+    testImplementation 'junit:junit:4.13.2'
+}

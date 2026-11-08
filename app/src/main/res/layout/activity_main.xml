@@ -1,0 +1,226 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <org.mapsforge.map.android.view.MapView
+        android:id="@+id/mapView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- top: search bar + speed -->
+    <LinearLayout
+        android:id="@+id/topArea"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:orientation="vertical"
+        android:padding="10dp">
+
+        <LinearLayout
+            android:id="@+id/topBar"
+            android:layout_width="match_parent"
+            android:layout_height="50dp"
+            android:background="@drawable/bg_card"
+            android:elevation="4dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/searchBox"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center_vertical"
+                android:paddingStart="16dp"
+                android:paddingEnd="8dp"
+                android:text="@string/search_hint"
+                android:textColor="#FF666666"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/menuBtn"
+                android:layout_width="50dp"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:text="⋮"
+                android:textColor="#FF333333"
+                android:textSize="24sp" />
+        </LinearLayout>
+
+        <!-- turn-by-road info while riding -->
+        <LinearLayout
+            android:id="@+id/navPanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_card"
+            android:elevation="4dp"
+            android:orientation="vertical"
+            android:padding="12dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/navMain"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#FF111111"
+                android:textSize="22sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/navSub"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="#FF444444"
+                android:textSize="15sp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/speedView"
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/bg_speed"
+            android:elevation="4dp"
+            android:gravity="center"
+            android:textColor="#FF111111"
+            android:textSize="14sp"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <!-- bottom: buttons + panels -->
+    <LinearLayout
+        android:id="@+id/bottomArea"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:orientation="vertical"
+        android:padding="10dp">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/btnRecord"
+                style="@style/Fab"
+                android:text="⏺"
+                android:textColor="#FFD32F2F" />
+
+            <TextView
+                android:id="@+id/btnRoute"
+                style="@style/Fab"
+                android:text="🧭" />
+
+            <TextView
+                android:id="@+id/btnLocate"
+                style="@style/Fab"
+                android:text="◎" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/recordInfo"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_card"
+            android:elevation="4dp"
+            android:paddingStart="14dp"
+            android:paddingTop="8dp"
+            android:paddingEnd="14dp"
+            android:paddingBottom="8dp"
+            android:textColor="#FFD32F2F"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <LinearLayout
+            android:id="@+id/routePanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/bg_card"
+            android:elevation="6dp"
+            android:orientation="vertical"
+            android:padding="10dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/routeTitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingBottom="6dp"
+                android:textColor="#FF111111"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <LinearLayout
+                android:id="@+id/altContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+
+            <LinearLayout
+                android:id="@+id/routeButtons"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/btnOptions"
+                    style="@style/PanelButton"
+                    android:background="@drawable/bg_button_light"
+                    android:text="⚙ Options"
+                    android:textColor="#FF1565C0" />
+
+                <TextView
+                    android:id="@+id/btnStart"
+                    style="@style/PanelButton"
+                    android:layout_weight="1.4"
+                    android:background="@drawable/bg_button"
+                    android:text="▶ Start ride"
+                    android:textColor="#FFFFFFFF" />
+
+                <TextView
+                    android:id="@+id/btnClear"
+                    style="@style/PanelButton"
+                    android:layout_weight="0.6"
+                    android:background="@drawable/bg_button_light"
+                    android:text="✕"
+                    android:textColor="#FF333333" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- first-launch loading -->
+    <LinearLayout
+        android:id="@+id/loading"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#F0FFFFFF"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:padding="32dp">
+
+        <ProgressBar
+            android:layout_width="48dp"
+            android:layout_height="48dp" />
+
+        <TextView
+            android:id="@+id/loadingText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:gravity="center"
+            android:text="Opening offline map…"
+            android:textColor="#FF333333"
+            android:textSize="16sp" />
+    </LinearLayout>
+</FrameLayout>
