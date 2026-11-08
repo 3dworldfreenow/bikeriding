@@ -35,7 +35,7 @@ jobs:
 
       - name: Data cache key (refreshes every week)
         id: key
-        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+        run: echo "data=mpdata-v1-${{ hashFiles('tools/*.py', 'tools/*.sh') }}-$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
 
       - name: Restore offline map data
         id: cache
@@ -47,7 +47,7 @@ jobs:
             app/src/main/assets/mp.graph
             app/src/main/assets/places.tsv
             app/src/main/assets/data_version.txt
-          key: mpdata-v1-${{ hashFiles('tools/**') }}-${{ steps.key.outputs.week }}
+          key: ${{ steps.key.outputs.data }}
 
       - name: Install map tools
         if: steps.cache.outputs.cache-hit != 'true'
@@ -58,6 +58,8 @@ jobs:
 
       - name: Build Madhya Pradesh offline data (map, routing, search)
         if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
         run: |
           df -h .
           JAVA_HEAP=10g tools/build_data.sh
@@ -72,7 +74,7 @@ jobs:
             app/src/main/assets/mp.graph
             app/src/main/assets/places.tsv
             app/src/main/assets/data_version.txt
-          key: mpdata-v1-${{ hashFiles('tools/**') }}-${{ steps.key.outputs.week }}
+          key: ${{ steps.key.outputs.data }}
 
       - uses: gradle/actions/setup-gradle@v4
 
