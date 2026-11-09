@@ -55,11 +55,16 @@ class Handler(osmium.SimpleHandler):
         self.rc = rc
         self.places = places_out
         self.n_places = 0
+        self.urban = []  # (lat, lon, radius_m) of cities and towns
 
     def _place(self, tags, lat, lon):
         cat = poi_category(tags)
         if not cat:
             return
+        if cat == 'city':
+            self.urban.append((lat, lon, 7000.0))
+        elif cat == 'town':
+            self.urban.append((lat, lon, 2500.0))
         name = clean(tags.get('name') or tags.get('name:en') or tags.get('brand'))
         hi = clean(tags.get('name:hi'))
         if not name and not hi:
@@ -112,7 +117,7 @@ def main():
         h = Handler(rc, pf)
         h.apply_file(src, locations=True, idx='flex_mem')
     print(f'parsed in {time.time() - t0:.0f}s, places: {h.n_places}')
-    g = graphlib.build_graph(rc)
+    g = graphlib.build_graph(rc, urban_centers=h.urban)
     graphlib.write_graph(g, os.path.join(out, 'mp.graph'))
     print(f'done in {time.time() - t0:.0f}s')
 

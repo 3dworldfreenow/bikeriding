@@ -2,11 +2,10 @@ name: Screenshots
 
 on:
   workflow_dispatch:
-  push:
+  workflow_run:
+    workflows: ["Build offline APK"]
+    types: [completed]
     branches: [main]
-    paths:
-      - .github/scripts/screenshots.sh
-      - .github/workflows/screenshots.yml
 
 permissions:
   contents: write
@@ -15,6 +14,7 @@ jobs:
   shots:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     steps:
       - uses: actions/checkout@v4
 

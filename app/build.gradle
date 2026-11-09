@@ -2,11 +2,10 @@ plugins {
     id 'com.android.application'
 }
 
-def mapsforgeVersion = '0.25.0'
 
 android {
     namespace 'com.bikeriding.mp'
-    compileSdk 35
+    compileSdk 36
 
     defaultConfig {
         applicationId 'com.bikeriding.mp'
@@ -55,12 +54,8 @@ android {
 }
 
 dependencies {
-    implementation "org.mapsforge:mapsforge-core:$mapsforgeVersion"
-    implementation "org.mapsforge:mapsforge-map:$mapsforgeVersion"
-    implementation "org.mapsforge:mapsforge-map-reader:$mapsforgeVersion"
-    implementation "org.mapsforge:mapsforge-themes:$mapsforgeVersion"
-    implementation "org.mapsforge:mapsforge-map-android:$mapsforgeVersion"
-    implementation 'com.caverock:androidsvg:1.4'
+    // MapLibre: GPU vector map (smooth pan/zoom, 2-finger rotate & tilt, offline PMTiles)
+    implementation 'org.maplibre.gl:android-sdk:13.6.1'
 
     testImplementation 'junit:junit:4.13.2'
 }

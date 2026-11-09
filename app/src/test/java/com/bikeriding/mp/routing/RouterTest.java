@@ -32,7 +32,7 @@ public class RouterTest {
     public void graphLoaded() {
         Graph g = router.graph();
         // island road is removed → X, M, Y, V1?, ... only junctions/ends remain
-        assertEquals(4, g.nodeCount);   // X, M, Y, S (V1/V2 are only shape points)
+        assertEquals(5, g.nodeCount);   // X, M, Y, S, ford end (V1/V2 are only shape points)
         assertTrue(g.edgeCount >= 4);
     }
 
@@ -86,6 +86,40 @@ public class RouterTest {
         Route v = router.route(new double[]{23.0, 23.085, 23.0}, new double[]{77.0, 77.25, 77.5}, new RouteOptions());
         assertTrue(v.mainRoads(3).contains("Gaon Road"));
         assertEquals(v.cumDist[v.size() - 1], v.distanceM, 200);
+    }
+
+    @Test
+    public void curvyModePrefersWigglyRoad() throws Exception {
+        RouteOptions o = new RouteOptions();
+        o.mode = RouteOptions.MODE_EXTRA_CURVY;
+        Route r = router.route(22.999, 77.001, 23.001, 77.499, o);
+        assertTrue("curvy route should use Gaon Road: " + r.mainRoads(3), r.mainRoads(3).contains("Gaon Road"));
+        assertTrue("twisty km expected, was " + r.curvyM, r.curvyM > 20000);
+        Route fast = router.route(22.999, 77.001, 23.001, 77.499, new RouteOptions());
+        assertTrue(fast.curvyM < 1000);
+    }
+
+    @Test
+    public void graphFlags() {
+        Graph g = router.graph();
+        boolean ford = false, urban = false, curvy = false;
+        for (int e = 0; e < g.edgeCount; e++) {
+            ford |= (g.edgeFlags(e) & Graph.F_FORD) != 0;
+            urban |= (g.edgeFlags(e) & Graph.F_URBAN) != 0;
+            curvy |= g.edgeCurvDegPerKm(e) > 60;
+        }
+        assertTrue(ford && urban && curvy);
+    }
+
+    @Test
+    public void optionsRoundTrip() {
+        RouteOptions o = new RouteOptions();
+        o.mode = RouteOptions.MODE_CURVY;
+        o.avoidFords = true;
+        o.avoidNH = true;
+        RouteOptions d = RouteOptions.decode(o.encode());
+        assertEquals(RouteOptions.MODE_CURVY, d.mode);
+        assertTrue(d.avoidFords && d.avoidNH && d.avoidExpressway && !d.avoidSH);
     }
 
     @Test

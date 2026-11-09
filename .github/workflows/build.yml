@@ -22,6 +22,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  compile:
+    # fast check without map data (a few minutes)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew --no-daemon testDebugUnitTest assembleDebug
+
   apk:
     runs-on: ubuntu-latest
     timeout-minutes: 300
@@ -31,54 +43,84 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Data cache key (refreshes every week)
+      - name: Data cache keys (refresh every week)
         id: key
-        run: echo "data=mpdata-v1-${{ hashFiles('tools/*.py', 'tools/*.sh') }}-$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+        run: |
+          W=$(date -u +%G-%V)
+          echo "graph=mpgraph-v2-${{ hashFiles('tools/graphlib.py', 'tools/build_graph.py', 'tools/pick_boundary.py', 'tools/build_data.sh') }}-$W" >> "$GITHUB_OUTPUT"
+          echo "tiles=mptiles-v1-${{ hashFiles('tools/build_tiles.sh', 'tools/make_style.py', 'tools/pick_boundary.py', 'tools/build_data.sh') }}-$W" >> "$GITHUB_OUTPUT"
 
-      - name: Restore offline map data
-        id: cache
+      - name: Restore routing + search data
+        id: graphcache
         if: ${{ !inputs.rebuild_data }}
         uses: actions/cache/restore@v4
         with:
           path: |
-            app/src/main/assets/mp.map
             app/src/main/assets/mp.graph
             app/src/main/assets/places.tsv
             app/src/main/assets/data_version.txt
-          key: ${{ steps.key.outputs.data }}
+          key: ${{ steps.key.outputs.graph }}
+
+      - name: Restore map tiles + style
+        id: tilescache
+        if: ${{ !inputs.rebuild_data }}
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            app/src/main/assets/mp.pmtiles
+            app/src/main/assets/mapstyle
+          key: ${{ steps.key.outputs.tiles }}
+
+      - name: What needs building
+        id: parts
+        run: |
+          P=""
+          [ "${{ steps.graphcache.outputs.cache-hit }}" = "true" ] || P="$P graph"
+          [ "${{ steps.tilescache.outputs.cache-hit }}" = "true" ] || P="$P tiles"
+          echo "parts=$P" >> "$GITHUB_OUTPUT"
+          echo "building:$P"
 
       - name: Install map tools
-        if: steps.cache.outputs.cache-hit != 'true'
+        if: steps.parts.outputs.parts != ''
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q osmium-tool
           pip install osmium numpy
 
-      - name: Build Madhya Pradesh offline data (map, routing, search)
-        if: steps.cache.outputs.cache-hit != 'true'
+      - name: Build Madhya Pradesh offline data
+        if: steps.parts.outputs.parts != ''
         env:
           PYTHONDONTWRITEBYTECODE: "1"
+          PARTS: ${{ steps.parts.outputs.parts }}
         run: |
           df -h .
           JAVA_HEAP=10g tools/build_data.sh
-          rm -rf build-data/source.osm.pbf
+          rm -rf build-data
 
-      - name: Save offline map data
-        if: steps.cache.outputs.cache-hit != 'true'
+      - name: Save routing + search data
+        if: steps.graphcache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: |
-            app/src/main/assets/mp.map
             app/src/main/assets/mp.graph
             app/src/main/assets/places.tsv
             app/src/main/assets/data_version.txt
-          key: ${{ steps.key.outputs.data }}
+          key: ${{ steps.key.outputs.graph }}
+
+      - name: Save map tiles + style
+        if: steps.tilescache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            app/src/main/assets/mp.pmtiles
+            app/src/main/assets/mapstyle
+          key: ${{ steps.key.outputs.tiles }}
 
       - uses: gradle/actions/setup-gradle@v4
 
@@ -124,7 +166,7 @@ jobs:
           name: Bike Riding MP – build ${{ github.run_number }}
           make_latest: true
           body: |
-            Offline map + routing + search for Madhya Pradesh, all inside the APK.
+            Offline map + routing + search for Madhya Pradesh, all inside the APK (satellite view needs internet or a saved area).
 
             **Download one of these:**
             - `.apk` – open it on the phone and install (allow "Install unknown apps").

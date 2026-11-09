@@ -26,7 +26,7 @@ public final class Route {
     /** cumulative distance from start at each point, metres */
     public double[] cumDist = new double[0];
     public double distanceM, timeS;
-    public double nhM, shM, tollM, unpavedM, expresswayM;
+    public double nhM, shM, tollM, unpavedM, expresswayM, curvyM, fordM;
     public final List<Step> steps = new ArrayList<>();
 
     Route(RouteOptions options) {
@@ -99,6 +99,8 @@ public final class Route {
             r.tollM += l.tollM;
             r.unpavedM += l.unpavedM;
             r.expresswayM += l.expresswayM;
+            r.curvyM += l.curvyM;
+            r.fordM += l.fordM;
         }
         return r;
     }

@@ -1,15 +1,16 @@
 package com.bikeriding.mp;
 
 import android.Manifest;
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Path;
 import android.graphics.Typeface;
-import android.graphics.drawable.BitmapDrawable;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
@@ -18,9 +19,11 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.Editable;
+import android.text.InputType;
 import android.text.TextWatcher;
 import android.util.Log;
 import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -31,8 +34,6 @@ import android.widget.EditText;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
-import android.widget.RadioButton;
-import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -43,55 +44,70 @@ import com.bikeriding.mp.routing.Route;
 import com.bikeriding.mp.routing.RouteOptions;
 import com.bikeriding.mp.routing.Router;
 
-import org.mapsforge.core.graphics.Bitmap;
-import org.mapsforge.core.graphics.Cap;
-import org.mapsforge.core.graphics.Join;
-import org.mapsforge.core.graphics.Paint;
-import org.mapsforge.core.graphics.Style;
-import org.mapsforge.core.model.LatLong;
-import org.mapsforge.core.model.Point;
-import org.mapsforge.map.android.graphics.AndroidGraphicFactory;
-import org.mapsforge.map.android.util.AndroidUtil;
-import org.mapsforge.map.android.view.MapView;
-import org.mapsforge.map.layer.Layer;
-import org.mapsforge.map.layer.cache.TileCache;
-import org.mapsforge.map.layer.overlay.Circle;
-import org.mapsforge.map.layer.overlay.Marker;
-import org.mapsforge.map.layer.overlay.Polyline;
-import org.mapsforge.map.layer.renderer.TileRendererLayer;
-import org.mapsforge.map.reader.MapFile;
-import org.mapsforge.map.rendertheme.XmlRenderTheme;
+import org.maplibre.android.MapLibre;
+import org.maplibre.android.camera.CameraPosition;
+import org.maplibre.android.camera.CameraUpdateFactory;
+import org.maplibre.android.geometry.LatLng;
+import org.maplibre.android.geometry.LatLngBounds;
+import org.maplibre.android.location.LocationComponent;
+import org.maplibre.android.location.LocationComponentActivationOptions;
+import org.maplibre.android.location.OnCameraTrackingChangedListener;
+import org.maplibre.android.location.modes.CameraMode;
+import org.maplibre.android.location.modes.RenderMode;
+import org.maplibre.android.maps.MapLibreMap;
+import org.maplibre.android.maps.MapView;
+import org.maplibre.android.maps.Style;
+import org.maplibre.android.maps.UiSettings;
+import org.maplibre.android.style.expressions.Expression;
+import org.maplibre.android.style.layers.BackgroundLayer;
+import org.maplibre.android.style.layers.FillExtrusionLayer;
+import org.maplibre.android.style.layers.FillLayer;
+import org.maplibre.android.style.layers.Layer;
+import org.maplibre.android.style.layers.LineLayer;
+import org.maplibre.android.style.layers.Property;
+import org.maplibre.android.style.layers.PropertyFactory;
+import org.maplibre.android.style.layers.SymbolLayer;
+import org.maplibre.android.style.sources.GeoJsonSource;
+import org.maplibre.geojson.Feature;
+import org.maplibre.geojson.FeatureCollection;
+import org.maplibre.geojson.LineString;
+import org.maplibre.geojson.Point;
 
-import java.io.File;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity implements LocationListener, TrackRecorder.Listener {
     private static final String TAG = "BikeRidingMP";
-    private static final LatLong BHOPAL = new LatLong(23.2599, 77.4126);
+    private static final LatLng BHOPAL = new LatLng(23.2599, 77.4126);
     private static final int REQ_LOCATION = 1, REQ_NOTIFY = 2;
 
     private final ExecutorService bg = Executors.newSingleThreadExecutor();
     private final Handler ui = new Handler(Looper.getMainLooper());
     private SharedPreferences prefs;
+    private TripStore trips;
 
     // views
     private MapView mapView;
     private View loading, routePanel, navPanel;
-    private TextView loadingText, speedView, recordInfo, routeTitle, navMain, navSub, btnRecord, btnLocate;
-    private LinearLayout altContainer;
+    private TextView loadingText, speedView, recordInfo, routeTitle, navMain, navSub, btnRecord, btnLocate, btnLayers;
+    private LinearLayout altContainer, modeChips;
 
     // map
-    private TileCache tileCache;
-    private TileRendererLayer tileLayer;
-    private Polyline altLine, mainLine, trackLine;
-    private Circle accuracyCircle;
-    private Marker meMarker, startMarker, destMarker, searchMarker;
-    private final List<Marker> viaMarkers = new ArrayList<>();
-    private Bitmap meBitmap;
+    private MapLibreMap map;
+    private Style style;
+    private String styleJson;
+    private boolean dataReady;
+    private GeoJsonSource srcAlt, srcMain, srcTrack, srcPins;
+    private LocationComponent lc;
+    private boolean satellite;
+    private final Set<String> hiddenForSatellite = new HashSet<>();
 
     // data
     private Router router;
@@ -100,9 +116,9 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
     // state
     private LocationManager lm;
     private Location myLoc;
-    private boolean follow = true;
-    private LatLong startPt, destPt;
-    private final List<LatLong> vias = new ArrayList<>();
+    private boolean follow = true, headingUp;
+    private LatLng startPt, destPt, searchPt;
+    private final List<LatLng> vias = new ArrayList<>();
     private final List<Route> routes = new ArrayList<>();
     private final List<String> routeNames = new ArrayList<>();
     private int selected = 0;
@@ -114,8 +130,10 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        AndroidGraphicFactory.createInstance(getApplication());
+        MapLibre.getInstance(this);
         prefs = getSharedPreferences("settings", MODE_PRIVATE);
+        trips = new TripStore(this);
+        satellite = prefs.getBoolean("satellite", false);
         setContentView(R.layout.activity_main);
 
         mapView = findViewById(R.id.mapView);
@@ -126,39 +144,36 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
         routePanel = findViewById(R.id.routePanel);
         routeTitle = findViewById(R.id.routeTitle);
         altContainer = findViewById(R.id.altContainer);
+        modeChips = findViewById(R.id.modeChips);
         navPanel = findViewById(R.id.navPanel);
         navMain = findViewById(R.id.navMain);
         navSub = findViewById(R.id.navSub);
         btnRecord = findViewById(R.id.btnRecord);
         btnLocate = findViewById(R.id.btnLocate);
+        btnLayers = findViewById(R.id.btnLayers);
 
         applyInsets();
-
-        mapView.setClickable(true);
-        mapView.getMapScaleBar().setVisible(true);
-        mapView.setBuiltInZoomControls(false);
-        mapView.setZoomLevelMin((byte) 5);
-        mapView.setZoomLevelMax((byte) 20);
-        mapView.setCenter(new LatLong(prefs.getFloat("lat", (float) BHOPAL.latitude), prefs.getFloat("lon", (float) BHOPAL.longitude)));
-        mapView.setZoomLevel((byte) prefs.getInt("zoom", 8));
-        mapView.setOnTouchListener((v, e) -> {
-            if (e.getActionMasked() == android.view.MotionEvent.ACTION_MOVE && follow) {
-                follow = false;
-                updateLocateButton();
-            }
-            return false;
-        });
 
         findViewById(R.id.searchBox).setOnClickListener(v -> showSearch());
         findViewById(R.id.menuBtn).setOnClickListener(v -> showMenu());
         btnLocate.setOnClickListener(v -> onLocateClicked());
         btnRecord.setOnClickListener(v -> toggleRecording());
+        btnLayers.setOnClickListener(v -> setSatellite(!satellite, true));
         findViewById(R.id.btnRoute).setOnClickListener(v -> onRouteButton());
         findViewById(R.id.btnOptions).setOnClickListener(v -> showRouteOptions());
         findViewById(R.id.btnStart).setOnClickListener(v -> startRide());
+        findViewById(R.id.btnSave).setOnClickListener(v -> saveTrip());
         findViewById(R.id.btnClear).setOnClickListener(v -> clearRoute());
+        buildModeChips();
+        updateLayersButton();
 
         lm = (LocationManager) getSystemService(LOCATION_SERVICE);
+        mapView.onCreate(savedInstanceState);
+        mapView.getMapAsync(m -> {
+            map = m;
+            setupMap();
+            loadStyleIfReady();
+        });
         loadData();
     }
 
@@ -170,6 +185,10 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
             int l = insets.getSystemWindowInsetLeft(), r = insets.getSystemWindowInsetRight();
             top.setPadding(pad + l, pad + t, pad + r, pad);
             bottom.setPadding(pad + l, pad, pad + r, pad + b);
+            if (map != null) {
+                map.getUiSettings().setCompassMargins(0, t + dp(140), r + dp(16), 0);
+                map.getUiSettings().setAttributionMargins(l + dp(8), 0, 0, b + dp(4));
+            }
             return insets;
         });
     }
@@ -177,18 +196,17 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
     private void loadData() {
         loading.setVisibility(View.VISIBLE);
         bg.execute(() -> {
-            File map = null;
-            String error = null;
+            String json = null, error = null;
             try {
-                map = DataStore.prepareMap(this, p -> ui.post(() ->
-                        loadingText.setText("Unpacking offline map of Madhya Pradesh…\n(first start only)\n" + p + " MB")));
+                DataStore.prepare(this, (what, mb) -> ui.post(() ->
+                        loadingText.setText("Unpacking offline " + what + " of Madhya Pradesh…\n(first start after install)\n" + mb + " MB")));
+                json = DataStore.styleJson(this);
             } catch (Exception e) {
-                Log.e(TAG, "map", e);
-                error = "Map error: " + e.getMessage();
+                Log.e(TAG, "data", e);
+                error = e.getMessage();
             }
             try {
-                Graph g = DataStore.openGraph(this, p -> ui.post(() ->
-                        loadingText.setText("Unpacking road network for trip planning…\n(first start only)\n" + p + " MB")));
+                Graph g = DataStore.openGraph(this);
                 if (g != null) router = new Router(g);
             } catch (Exception e) {
                 Log.e(TAG, "graph", e);
@@ -198,103 +216,153 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
             } catch (Exception e) {
                 Log.e(TAG, "places", e);
             }
-            final File mapFile = map;
-            final String err = error;
-            ui.post(() -> onDataReady(mapFile, err));
+            final String sj = json, err = error;
+            ui.post(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                styleJson = sj;
+                dataReady = true;
+                loading.setVisibility(View.GONE);
+                if (sj == null) {
+                    new AlertDialog.Builder(this).setTitle("Offline map missing")
+                            .setMessage((err != null ? err + "\n\n" : "")
+                                    + "This APK was built without map data. Download the full APK from the GitHub "
+                                    + "Releases page (built by GitHub Actions), or run tools/build_data.sh before building.")
+                            .setPositiveButton("OK", null).show();
+                } else if (router == null) {
+                    Toast.makeText(this, "Routing data missing – trip planning disabled", Toast.LENGTH_LONG).show();
+                }
+                loadStyleIfReady();
+            });
         });
     }
 
-    private void onDataReady(File mapFile, String error) {
-        if (isFinishing() || isDestroyed()) return;
-        loading.setVisibility(View.GONE);
-        if (mapFile != null && mapFile.exists()) {
-            try {
-                tileCache = AndroidUtil.createTileCache(this, "mapcache", mapView.getModel().displayModel.getTileSize(),
-                        1f, mapView.getModel().frameBufferModel.getOverdrawFactor());
-                String lang = prefs.getString("lang", "en");
-                MapFile mf = new MapFile(mapFile, lang);
-                tileLayer = new TileRendererLayer(tileCache, mf, mapView.getModel().mapViewPosition,
-                        AndroidGraphicFactory.INSTANCE) {
-                    @Override
-                    public boolean onLongPress(LatLong tapLatLong, Point layerXY, Point tapXY) {
-                        showPointMenu(tapLatLong);
-                        return true;
-                    }
-                };
-                XmlRenderTheme theme = findTheme();
-                if (theme != null) tileLayer.setXmlRenderTheme(theme);
-                mapView.getLayerManager().getLayers().add(tileLayer);
-            } catch (Exception e) {
-                Log.e(TAG, "map layer", e);
-                error = "Cannot open map: " + e.getMessage();
-            }
-        }
-        addOverlayLayers();
-        if (tileLayer == null) {
-            new AlertDialog.Builder(this)
-                    .setTitle("Offline map missing")
-                    .setMessage((error != null ? error + "\n\n" : "")
-                            + "This APK was built without map data. Download the full APK from the GitHub "
-                            + "Releases page (built by GitHub Actions), or run tools/build_data.sh before building.")
-                    .setPositiveButton("OK", null).show();
-        } else if (router == null) {
-            Toast.makeText(this, "Routing data missing – trip planning disabled", Toast.LENGTH_LONG).show();
-        }
-        TrackRecorder.get().addListener(this);
-        onTrackChanged();
+    private void setupMap() {
+        UiSettings u = map.getUiSettings();
+        u.setCompassEnabled(true);
+        u.setCompassGravity(Gravity.TOP | Gravity.END);
+        u.setCompassMargins(0, dp(170), dp(16), 0);
+        u.setLogoEnabled(false);
+        u.setAttributionEnabled(true);
+        u.setAttributionGravity(Gravity.BOTTOM | Gravity.START);
+        u.setRotateGesturesEnabled(true);
+        u.setTiltGesturesEnabled(true);
+        map.setMinZoomPreference(5);
+        map.setMaxZoomPreference(19);
+        map.setCameraPosition(new CameraPosition.Builder()
+                .target(new LatLng(prefs.getFloat("lat", (float) BHOPAL.getLatitude()), prefs.getFloat("lon", (float) BHOPAL.getLongitude())))
+                .zoom(prefs.getFloat("zoomf", 8f)).build());
+        map.addOnMapLongClickListener(p -> {
+            showPointMenu(p);
+            return true;
+        });
     }
 
-    /** Motorider theme (good for bikers) if this mapsforge version has it, else the default theme. */
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    private static XmlRenderTheme findTheme() {
-        String[] classes = {"org.mapsforge.map.rendertheme.internal.MapsforgeThemes",
-                "org.mapsforge.map.rendertheme.InternalRenderTheme"};
-        String[] names = {"MOTORIDER", "DEFAULT", "OSMARENDER"};
-        for (String name : names) {
-            for (String cls : classes) {
-                try {
-                    Class c = Class.forName(cls);
-                    return (XmlRenderTheme) Enum.valueOf(c, name);
-                } catch (Throwable ignored) {
-                }
-            }
+    private void loadStyleIfReady() {
+        if (map == null || !dataReady) return;
+        Style.Builder b = styleJson != null ? new Style.Builder().fromJson(styleJson)
+                : new Style.Builder().fromJson("{\"version\":8,\"sources\":{},\"layers\":[{\"id\":\"bg\",\"type\":\"background\",\"paint\":{\"background-color\":\"#eef0ea\"}}]}");
+        map.setStyle(b, s -> {
+            style = s;
+            addOverlayLayers(s);
+            enableLocationComponent();
+            if (styleJson != null) setSatellite(satellite, false);
+            drawRoutes();
+            updatePins();
+            TrackRecorder.get().addListener(this);
+            onTrackChanged();
+        });
+    }
+
+    /** id of the first label layer – our lines go below it so names stay readable */
+    private String firstSymbolLayer(Style s) {
+        for (Layer l : s.getLayers()) {
+            if (l instanceof SymbolLayer) return l.getId();
         }
         return null;
     }
 
-    private Paint stroke(int color, float widthDp) {
-        Paint p = AndroidGraphicFactory.INSTANCE.createPaint();
-        p.setColor(color);
-        p.setStrokeWidth(dp(widthDp));
-        p.setStyle(Style.STROKE);
-        p.setStrokeCap(Cap.ROUND);
-        p.setStrokeJoin(Join.ROUND);
-        return p;
+    private void addOverlayLayers(Style s) {
+        srcAlt = new GeoJsonSource("route-alt");
+        srcMain = new GeoJsonSource("route-main");
+        srcTrack = new GeoJsonSource("track");
+        srcPins = new GeoJsonSource("pins");
+        s.addSource(srcAlt);
+        s.addSource(srcMain);
+        s.addSource(srcTrack);
+        s.addSource(srcPins);
+        String below = firstSymbolLayer(s);
+        Layer[] lines = {
+                new LineLayer("route-alt-line", "route-alt").withProperties(
+                        PropertyFactory.lineColor(0xFF90A4AE), PropertyFactory.lineWidth(6f), PropertyFactory.lineOpacity(0.85f),
+                        PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)),
+                new LineLayer("route-main-casing", "route-main").withProperties(
+                        PropertyFactory.lineColor(0xFFFFFFFF), PropertyFactory.lineWidth(10f),
+                        PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)),
+                new LineLayer("route-main-line", "route-main").withProperties(
+                        PropertyFactory.lineColor(0xFF1A73E8), PropertyFactory.lineWidth(7f),
+                        PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)),
+                new LineLayer("track-line", "track").withProperties(
+                        PropertyFactory.lineColor(0xDDD32F2F), PropertyFactory.lineWidth(4f),
+                        PropertyFactory.lineCap(Property.LINE_CAP_ROUND), PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND)),
+        };
+        for (Layer l : lines) {
+            if (below != null) s.addLayerBelow(l, below);
+            else s.addLayer(l);
+        }
+        s.addImage("pin-A", drawPin(0xFF2E7D32, "A"));
+        s.addImage("pin-B", drawPin(0xFFC62828, "B"));
+        s.addImage("pin-S", drawPin(0xFF6A1B9A, "•"));
+        for (int i = 1; i <= 9; i++) s.addImage("pin-" + i, drawPin(0xFFF9A825, String.valueOf(i)));
+        s.addLayer(new SymbolLayer("pins-layer", "pins").withProperties(
+                PropertyFactory.iconImage(Expression.get("icon")),
+                PropertyFactory.iconAllowOverlap(true),
+                PropertyFactory.iconIgnorePlacement(true),
+                PropertyFactory.iconAnchor(Property.ICON_ANCHOR_BOTTOM)));
     }
 
-    private void addOverlayLayers() {
-        altLine = new Polyline(stroke(0xAA78909C, 6), AndroidGraphicFactory.INSTANCE);
-        mainLine = new Polyline(stroke(0xDD1565C0, 7), AndroidGraphicFactory.INSTANCE);
-        trackLine = new Polyline(stroke(0xCCD32F2F, 4), AndroidGraphicFactory.INSTANCE);
-        mapView.getLayerManager().getLayers().add(altLine);
-        mapView.getLayerManager().getLayers().add(mainLine);
-        mapView.getLayerManager().getLayers().add(trackLine);
-        meBitmap = toBitmap(drawDot());
+    @Override
+    protected void onStart() {
+        super.onStart();
+        mapView.onStart();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        mapView.onResume();
         startLocation();
     }
 
     @Override
     protected void onPause() {
         if (!navigating) stopLocation();
-        LatLong c = mapView.getModel().mapViewPosition.getCenter();
-        prefs.edit().putFloat("lat", (float) c.latitude).putFloat("lon", (float) c.longitude)
-                .putInt("zoom", mapView.getModel().mapViewPosition.getZoomLevel()).apply();
+        if (map != null) {
+            CameraPosition c = map.getCameraPosition();
+            if (c.target != null) {
+                prefs.edit().putFloat("lat", (float) c.target.getLatitude()).putFloat("lon", (float) c.target.getLongitude())
+                        .putFloat("zoomf", (float) c.zoom).apply();
+            }
+        }
+        mapView.onPause();
         super.onPause();
+    }
+
+    @Override
+    protected void onStop() {
+        mapView.onStop();
+        super.onStop();
+    }
+
+    @Override
+    public void onLowMemory() {
+        super.onLowMemory();
+        mapView.onLowMemory();
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        mapView.onSaveInstanceState(outState);
     }
 
     @Override
@@ -302,8 +370,7 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
         stopLocation();
         TrackRecorder.get().removeListener(this);
         bg.shutdownNow();
-        mapView.destroyAll();
-        AndroidGraphicFactory.clearResourceMemoryCache();
+        mapView.onDestroy();
         super.onDestroy();
     }
 
@@ -320,10 +387,132 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
         }
     }
 
+    // ------------------------------------------------------------------ satellite
+
+    private void setSatellite(boolean on, boolean userAction) {
+        satellite = on;
+        prefs.edit().putBoolean("satellite", on).apply();
+        updateLayersButton();
+        if (style == null) return;
+        Layer sat = style.getLayer("satellite");
+        if (sat == null) return;
+        if (on) {
+            hiddenForSatellite.clear();
+            for (Layer l : style.getLayers()) {
+                if (l instanceof FillLayer || l instanceof FillExtrusionLayer || l instanceof BackgroundLayer) {
+                    if (!Property.NONE.equals(l.getVisibility().getValue())) {
+                        hiddenForSatellite.add(l.getId());
+                        l.setProperties(PropertyFactory.visibility(Property.NONE));
+                    }
+                }
+            }
+            sat.setProperties(PropertyFactory.visibility(Property.VISIBLE));
+            if (userAction) {
+                Toast.makeText(this, "Satellite view (needs internet, or save an area: menu ⋮)", Toast.LENGTH_LONG).show();
+            }
+        } else {
+            sat.setProperties(PropertyFactory.visibility(Property.NONE));
+            for (String id : hiddenForSatellite) {
+                Layer l = style.getLayer(id);
+                if (l != null) l.setProperties(PropertyFactory.visibility(Property.VISIBLE));
+            }
+            hiddenForSatellite.clear();
+        }
+    }
+
+    private void updateLayersButton() {
+        btnLayers.setText(satellite ? "🗺" : "🛰");
+        btnLayers.setBackgroundResource(satellite ? R.drawable.bg_fab_active : R.drawable.bg_fab);
+    }
+
+    private void saveSatellite(boolean forRoute) {
+        LatLngBounds b;
+        String name;
+        if (forRoute && !routes.isEmpty()) {
+            Route r = routes.get(selected);
+            LatLngBounds.Builder bb = new LatLngBounds.Builder();
+            for (int i = 0; i < r.size(); i += Math.max(1, r.size() / 200)) bb.include(new LatLng(r.lats[i], r.lons[i]));
+            bb.include(new LatLng(r.lats[r.size() - 1], r.lons[r.size() - 1]));
+            try {
+                b = pad(bb.build(), 0.05);
+            } catch (Exception e) {
+                b = null;
+            }
+            name = routeNames.get(selected);
+        } else {
+            b = map == null ? null : map.getProjection().getVisibleRegion().latLngBounds;
+            name = "Area " + new SimpleDateFormat("d MMM HH:mm", Locale.US).format(new Date());
+        }
+        if (b == null) {
+            Toast.makeText(this, "Plan a route first, or choose \"visible area\"", Toast.LENGTH_LONG).show();
+            return;
+        }
+        final LatLngBounds bounds = b;
+        final String regionName = name;
+        String[] levels = {"Normal detail (up to zoom 12)", "High detail (up to zoom 13)", "Max detail (zoom 14 – big!)"};
+        int[] zooms = {12, 13, 14};
+        String[] items = new String[3];
+        for (int i = 0; i < 3; i++) {
+            long tiles = OfflineSatellite.estimateTiles(bounds, OfflineSatellite.MIN_ZOOM, zooms[i]);
+            items[i] = levels[i] + String.format(Locale.US, " – about %d MB", Math.max(1, tiles * OfflineSatellite.BYTES_PER_TILE >> 20));
+        }
+        new AlertDialog.Builder(this).setTitle("Save satellite for offline use (use Wi‑Fi)")
+                .setItems(items, (d, which) -> {
+                    recordInfo.setVisibility(View.VISIBLE);
+                    recordInfo.setText("🛰 Saving satellite… 0%");
+                    OfflineSatellite.download(this, regionName, bounds, zooms[which], new OfflineSatellite.Listener() {
+                        @Override
+                        public void onProgress(long done, long total, long bytes) {
+                            if (total > 0) recordInfo.setText(String.format(Locale.US, "🛰 Saving satellite… %d%% (%d MB)",
+                                    done * 100 / total, bytes >> 20));
+                        }
+
+                        @Override
+                        public void onDone(boolean ok, String message) {
+                            Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
+                            onTrackChanged();
+                        }
+                    });
+                }).setNegativeButton("Cancel", null).show();
+    }
+
+    private static LatLngBounds pad(LatLngBounds b, double deg) {
+        return LatLngBounds.from(b.getLatNorth() + deg, b.getLonEast() + deg, b.getLatSouth() - deg, b.getLonWest() - deg);
+    }
+
     // ------------------------------------------------------------------ location
 
     private boolean hasLocationPermission() {
         return checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    @SuppressLint("MissingPermission")
+    private void enableLocationComponent() {
+        if (map == null || style == null || lc != null) return;
+        try {
+            lc = map.getLocationComponent();
+            lc.activateLocationComponent(LocationComponentActivationOptions.builder(this, style)
+                    .useDefaultLocationEngine(false).build());
+            lc.setLocationComponentEnabled(true);
+            lc.setRenderMode(RenderMode.COMPASS);
+            lc.setCameraMode(follow ? CameraMode.TRACKING : CameraMode.NONE);
+            lc.addOnCameraTrackingChangedListener(new OnCameraTrackingChangedListener() {
+                @Override
+                public void onCameraTrackingDismissed() {
+                    follow = false;
+                    headingUp = false;
+                    updateLocateButton();
+                }
+
+                @Override
+                public void onCameraTrackingChanged(int currentMode) {
+                }
+            });
+            if (myLoc != null) lc.forceLocationUpdate(myLoc);
+        } catch (Exception e) {
+            Log.w(TAG, "location component", e);
+            lc = null;
+        }
     }
 
     private void startLocation() {
@@ -360,34 +549,21 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
 
     @Override
     public void onLocationChanged(Location l) {
-        // prefer GPS: ignore network fixes when a recent GPS fix exists
         if (LocationManager.NETWORK_PROVIDER.equals(l.getProvider()) && myLoc != null
                 && LocationManager.GPS_PROVIDER.equals(myLoc.getProvider()) && l.getTime() - myLoc.getTime() < 15000) {
             return;
         }
         myLoc = l;
-        LatLong p = new LatLong(l.getLatitude(), l.getLongitude());
-        if (meMarker == null && meBitmap != null) {
-            Paint fill = AndroidGraphicFactory.INSTANCE.createPaint();
-            fill.setColor(0x301565C0);
-            fill.setStyle(Style.FILL);
-            Paint st = stroke(0x601565C0, 1);
-            accuracyCircle = new Circle(p, l.getAccuracy(), fill, st);
-            meMarker = new Marker(p, meBitmap, 0, 0);
-            mapView.getLayerManager().getLayers().add(accuracyCircle);
-            mapView.getLayerManager().getLayers().add(meMarker);
-        } else if (meMarker != null) {
-            meMarker.setLatLong(p);
-            accuracyCircle.setLatLong(p);
-            accuracyCircle.setRadius(l.getAccuracy());
-            meMarker.requestRedraw();
+        if (lc != null) {
+            try {
+                lc.forceLocationUpdate(l);
+            } catch (Exception e) {
+                Log.w(TAG, "forceLocationUpdate", e);
+            }
         }
         if (l.hasSpeed() && LocationManager.GPS_PROVIDER.equals(l.getProvider())) {
             speedView.setVisibility(View.VISIBLE);
             speedView.setText(String.format(Locale.US, "%d\nkm/h", Math.round(l.getSpeed() * 3.6)));
-        }
-        if (follow) {
-            mapView.setCenter(p);
         }
         if (navigating) updateNavigation(l);
     }
@@ -404,6 +580,7 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
     public void onProviderDisabled(String provider) {
     }
 
+    /** 1st tap: follow me (north up). 2nd tap: follow + map turns with my direction. */
     private void onLocateClicked() {
         if (myLoc == null) {
             Toast.makeText(this, hasLocationPermission() ? "Waiting for GPS signal… (go under open sky)" :
@@ -411,60 +588,85 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
             if (!hasLocationPermission()) startLocation();
             return;
         }
-        follow = true;
-        LatLong p = new LatLong(myLoc.getLatitude(), myLoc.getLongitude());
-        mapView.setCenter(p);
-        if (mapView.getModel().mapViewPosition.getZoomLevel() < 14) mapView.setZoomLevel((byte) 15);
+        if (follow && !headingUp && !navigating) {
+            headingUp = true;
+        } else if (follow && headingUp && !navigating) {
+            headingUp = false;
+        } else {
+            follow = true;
+        }
+        if (lc != null) {
+            lc.setCameraMode(navigating ? CameraMode.TRACKING_GPS : headingUp ? CameraMode.TRACKING_COMPASS : CameraMode.TRACKING);
+            if (!headingUp && !navigating && map != null) {
+                CameraPosition c = map.getCameraPosition();
+                map.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition.Builder(c)
+                        .bearing(0).tilt(0).zoom(Math.max(c.zoom, 15)).build()), 600);
+            }
+        }
         updateLocateButton();
     }
 
     private void updateLocateButton() {
         btnLocate.setBackgroundResource(follow ? R.drawable.bg_fab_active : R.drawable.bg_fab);
         btnLocate.setTextColor(follow ? Color.WHITE : 0xFF1565C0);
+        btnLocate.setText(headingUp ? "➤" : "◎");
     }
 
-    // ------------------------------------------------------------------ points & markers
+    private void stopFollowing() {
+        follow = false;
+        headingUp = false;
+        if (lc != null) lc.setCameraMode(CameraMode.NONE);
+        updateLocateButton();
+    }
 
-    private void showPointMenu(LatLong p) {
+    // ------------------------------------------------------------------ points & pins
+
+    private void showPointMenu(LatLng p) {
         String[] items = {"🧭 Route here (from my location)", "🟢 Set as start", "🏁 Set as destination",
                 "➕ Add stop on the way", "📍 What is here?"};
         new AlertDialog.Builder(this)
-                .setTitle(String.format(Locale.US, "%.5f, %.5f", p.latitude, p.longitude))
+                .setTitle(String.format(Locale.US, "%.5f, %.5f", p.getLatitude(), p.getLongitude()))
                 .setItems(items, (d, which) -> {
                     switch (which) {
-                        case 0: startPt = null; destPt = p; vias.clear(); updatePointMarkers(); computeRoutes(); break;
-                        case 1: startPt = p; updatePointMarkers(); if (destPt != null) computeRoutes(); break;
-                        case 2: destPt = p; updatePointMarkers(); computeRoutes(); break;
-                        case 3: vias.add(p); updatePointMarkers(); if (destPt != null) computeRoutes(); break;
+                        case 0: startPt = null; destPt = p; vias.clear(); updatePins(); computeRoutes(); break;
+                        case 1: startPt = p; updatePins(); if (destPt != null) computeRoutes(); break;
+                        case 2: destPt = p; updatePins(); computeRoutes(); break;
+                        case 3: if (vias.size() < 9) vias.add(p); updatePins(); if (destPt != null) computeRoutes(); break;
                         default: whatIsHere(p);
                     }
                 }).show();
     }
 
-    private void whatIsHere(LatLong p) {
+    private void whatIsHere(LatLng p) {
+        double la = p.getLatitude(), lo = p.getLongitude();
         StringBuilder sb = new StringBuilder();
         if (places != null) {
             for (String cat : new String[]{"city", "town", "village"}) {
-                List<PlacesIndex.Place> l = places.nearest(cat, p.latitude, p.longitude, 1);
+                List<PlacesIndex.Place> l = places.nearest(cat, la, lo, 1);
                 if (!l.isEmpty()) {
                     PlacesIndex.Place pl = l.get(0);
                     sb.append(PlacesIndex.categoryLabel(cat)).append(": ").append(pl.title()).append(" – ")
-                            .append(GeoUtil.formatDistance(GeoUtil.distance(p.latitude, p.longitude, pl.lat, pl.lon))).append('\n');
+                            .append(GeoUtil.formatDistance(GeoUtil.distance(la, lo, pl.lat, pl.lon))).append('\n');
                 }
             }
-            List<PlacesIndex.Place> fuel = places.nearest("fuel", p.latitude, p.longitude, 1);
+            List<PlacesIndex.Place> fuel = places.nearest("fuel", la, lo, 1);
             if (!fuel.isEmpty()) {
                 PlacesIndex.Place f = fuel.get(0);
                 sb.append("Nearest petrol: ").append(f.title()).append(" – ")
-                        .append(GeoUtil.formatDistance(GeoUtil.distance(p.latitude, p.longitude, f.lat, f.lon))).append('\n');
+                        .append(GeoUtil.formatDistance(GeoUtil.distance(la, lo, f.lat, f.lon))).append('\n');
             }
         }
         if (router != null) {
-            Router.Snap s = router.snap(p.latitude, p.longitude, 2000);
+            Router.Snap s = router.snap(la, lo, 2000);
             if (s != null) {
-                String name = router.graph().edgeName(s.edge);
+                Graph g = router.graph();
+                String name = g.edgeName(s.edge);
                 sb.append("Road: ").append(name == null ? "unnamed road" : name)
                         .append(" (").append(GeoUtil.formatDistance(s.offRoadM)).append(" away)\n");
+                int f = g.edgeFlags(s.edge);
+                if ((f & Graph.F_UNPAVED) != 0) sb.append("Road surface: kachcha / unpaved\n");
+                if ((f & Graph.F_FORD) != 0) sb.append("⚠ Water crossing on this road\n");
+                if (g.edgeCurvDegPerKm(s.edge) >= 60) sb.append("Twisty road 🌀\n");
             }
         }
         if (sb.length() == 0) sb.append("No data");
@@ -472,38 +674,39 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
                 .setPositiveButton("OK", null).show();
     }
 
-    private Marker addMarker(LatLong p, int color, String letter) {
-        Marker m = new Marker(p, toBitmap(drawPin(color, letter)), 0, -dp(18));
-        mapView.getLayerManager().getLayers().add(m);
-        return m;
+    private static Feature pin(LatLng p, String icon) {
+        Feature f = Feature.fromGeometry(Point.fromLngLat(p.getLongitude(), p.getLatitude()));
+        f.addStringProperty("icon", icon);
+        return f;
     }
 
-    private void removeLayer(Layer l) {
-        if (l != null) mapView.getLayerManager().getLayers().remove(l);
-    }
-
-    private void updatePointMarkers() {
-        removeLayer(startMarker);
-        removeLayer(destMarker);
-        for (Marker m : viaMarkers) removeLayer(m);
-        viaMarkers.clear();
-        startMarker = destMarker = null;
-        if (startPt != null) startMarker = addMarker(startPt, 0xFF2E7D32, "A");
-        for (int i = 0; i < vias.size(); i++) viaMarkers.add(addMarker(vias.get(i), 0xFFF9A825, String.valueOf(i + 1)));
-        if (destPt != null) destMarker = addMarker(destPt, 0xFFC62828, "B");
+    private void updatePins() {
+        if (srcPins == null) return;
+        List<Feature> fs = new ArrayList<>();
+        if (searchPt != null) fs.add(pin(searchPt, "pin-S"));
+        if (startPt != null) fs.add(pin(startPt, "pin-A"));
+        for (int i = 0; i < vias.size(); i++) fs.add(pin(vias.get(i), "pin-" + (i + 1)));
+        if (destPt != null) fs.add(pin(destPt, "pin-B"));
+        srcPins.setGeoJson(FeatureCollection.fromFeatures(fs));
     }
 
     // ------------------------------------------------------------------ routing
 
     private void onRouteButton() {
         if (destPt == null) {
-            new AlertDialog.Builder(this).setTitle("Plan a trip")
-                    .setMessage("• Long-press on the map to choose where you want to go\n"
-                            + "• Or search a village / town and tap \"Route here\"\n\n"
-                            + "You will get two routes to compare: with National Highways (NH) and without NH. "
-                            + "Use ⚙ Options to also avoid State Highways, toll or kachcha roads.")
-                    .setPositiveButton("Search place", (d, w) -> showSearch())
-                    .setNegativeButton("OK", null).show();
+            String[] items = {"🔍 Search a place", "📂 My saved trips", "ℹ How to plan a trip"};
+            new AlertDialog.Builder(this).setTitle("Plan a trip").setItems(items, (d, w) -> {
+                if (w == 0) showSearch();
+                else if (w == 1) showTrips();
+                else new AlertDialog.Builder(this).setTitle("Plan a trip")
+                            .setMessage("• Long-press on the map where you want to go\n"
+                                    + "• Or search a village / town and tap \"Route here\"\n"
+                                    + "• Long-press again → \"Add stop on the way\" for stops\n\n"
+                                    + "You get two routes to compare: with NH and without NH. Choose a riding style "
+                                    + "(Fastest, Curvy, Extra curvy, Shortest) and use ⚙ Avoid for SH, toll, kachcha roads, "
+                                    + "water crossings and city centres. 💾 saves the plan.")
+                            .setPositiveButton("OK", null).show();
+            }).show();
         } else {
             computeRoutes();
         }
@@ -511,27 +714,64 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
 
     private RouteOptions savedOptions() {
         RouteOptions o = new RouteOptions();
-        o.fastest = prefs.getBoolean("fastest", true);
+        o.mode = prefs.getInt("mode", RouteOptions.MODE_FASTEST);
         o.avoidNH = prefs.getBoolean("avoidNH", false);
         o.avoidSH = prefs.getBoolean("avoidSH", false);
         o.avoidToll = prefs.getBoolean("avoidToll", false);
         o.avoidUnpaved = prefs.getBoolean("avoidUnpaved", false);
         o.avoidExpressway = !prefs.getBoolean("allowExpressway", false);
+        o.avoidMainRoads = prefs.getBoolean("avoidMain", false);
+        o.avoidSmallRoads = prefs.getBoolean("avoidSmall", false);
+        o.avoidFords = prefs.getBoolean("avoidFords", false);
+        o.avoidCities = prefs.getBoolean("avoidCities", false);
         return o;
     }
 
+    private void storeOptions(RouteOptions o) {
+        prefs.edit().putInt("mode", o.mode).putBoolean("avoidNH", o.avoidNH).putBoolean("avoidSH", o.avoidSH)
+                .putBoolean("avoidToll", o.avoidToll).putBoolean("avoidUnpaved", o.avoidUnpaved)
+                .putBoolean("allowExpressway", !o.avoidExpressway).putBoolean("avoidMain", o.avoidMainRoads)
+                .putBoolean("avoidSmall", o.avoidSmallRoads).putBoolean("avoidFords", o.avoidFords)
+                .putBoolean("avoidCities", o.avoidCities).apply();
+    }
+
+    private void buildModeChips() {
+        modeChips.removeAllViews();
+        int mode = prefs.getInt("mode", RouteOptions.MODE_FASTEST);
+        String[] icons = {"⚡ ", "🌀 ", "🏔 ", "📏 "};
+        for (int i = 0; i < RouteOptions.MODE_NAMES.length; i++) {
+            final int m = i;
+            TextView chip = new TextView(this);
+            chip.setText(icons[i] + RouteOptions.MODE_NAMES[i]);
+            boolean sel = i == mode;
+            chip.setBackgroundResource(sel ? R.drawable.bg_chip_selected : R.drawable.bg_chip);
+            chip.setTextColor(sel ? Color.WHITE : 0xFF1565C0);
+            chip.setPadding(dp(12), dp(6), dp(12), dp(6));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.rightMargin = dp(6);
+            chip.setLayoutParams(lp);
+            chip.setOnClickListener(v -> {
+                prefs.edit().putInt("mode", m).apply();
+                buildModeChips();
+                if (destPt != null) computeRoutes();
+            });
+            modeChips.addView(chip);
+        }
+    }
+
     private double[][] routePoints(Location from) {
-        List<LatLong> pts = new ArrayList<>();
-        if (from != null) pts.add(new LatLong(from.getLatitude(), from.getLongitude()));
+        List<LatLng> pts = new ArrayList<>();
+        if (from != null) pts.add(new LatLng(from.getLatitude(), from.getLongitude()));
         else if (startPt != null) pts.add(startPt);
-        else if (myLoc != null) pts.add(new LatLong(myLoc.getLatitude(), myLoc.getLongitude()));
+        else if (myLoc != null) pts.add(new LatLng(myLoc.getLatitude(), myLoc.getLongitude()));
         else return null;
         if (from == null) pts.addAll(vias);
         pts.add(destPt);
         double[][] r = new double[2][pts.size()];
         for (int i = 0; i < pts.size(); i++) {
-            r[0][i] = pts.get(i).latitude;
-            r[1][i] = pts.get(i).longitude;
+            r[0][i] = pts.get(i).getLatitude();
+            r[1][i] = pts.get(i).getLongitude();
         }
         return r;
     }
@@ -560,14 +800,15 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
             withNH.avoidNH = false;
             RouteOptions noNH = base.copy();
             noNH.avoidNH = true;
+            String mode = RouteOptions.MODE_NAMES[base.mode];
             try {
                 Route a = router.route(pts[0], pts[1], withNH);
                 found.add(a);
-                names.add("Via highways" + (withNH.avoidSH ? " (NH ok, no SH)" : " (NH allowed)"));
+                names.add(mode + " · NH allowed");
                 Route b = router.route(pts[0], pts[1], noNH);
                 if (Math.abs(b.distanceM - a.distanceM) > 200 || Math.abs(b.nhM - a.nhM) > 200) {
                     found.add(b);
-                    names.add("Avoid NH" + (noNH.avoidSH ? " & SH" : ""));
+                    names.add(mode + " · avoid NH");
                 }
             } catch (Router.NoRouteException e) {
                 error = e.getMessage();
@@ -585,6 +826,7 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
                 if (err != null || routes.isEmpty()) {
                     routeTitle.setText(err != null ? err : "No route");
                     altContainer.removeAllViews();
+                    drawRoutes();
                     findViewById(R.id.routeButtons).setVisibility(View.VISIBLE);
                     findViewById(R.id.btnStart).setVisibility(View.GONE);
                     return;
@@ -609,8 +851,12 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
                     + GeoUtil.formatDistance(r.distanceM) + ", " + GeoUtil.formatDuration(r.timeS);
             String body = String.format(Locale.US, "NH %.0f km · SH %.0f km · other %.0f km",
                     r.nhM / 1000, r.shM / 1000, Math.max(0, r.distanceM - r.nhM - r.shM) / 1000);
-            if (r.unpavedM > 300) body += String.format(Locale.US, " · kachcha %.1f km", r.unpavedM / 1000);
-            if (r.tollM > 300) body += String.format(Locale.US, " · toll %.0f km", r.tollM / 1000);
+            List<String> extra = new ArrayList<>();
+            if (r.curvyM > 1000) extra.add(String.format(Locale.US, "🌀 twisty %.0f km", r.curvyM / 1000));
+            if (r.unpavedM > 300) extra.add(String.format(Locale.US, "kachcha %.1f km", r.unpavedM / 1000));
+            if (r.tollM > 300) extra.add(String.format(Locale.US, "toll %.0f km", r.tollM / 1000));
+            if (r.fordM > 0) extra.add("⚠ water crossing");
+            if (!extra.isEmpty()) body += "\n" + android.text.TextUtils.join(" · ", extra);
             String roads = r.mainRoads(4);
             if (!roads.isEmpty()) body += "\nvia " + roads;
             tv.setText(head + "\n" + body);
@@ -632,39 +878,34 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
         if (zoomToFit) zoomTo(routes.get(selected));
     }
 
-    private static List<LatLong> toLatLongs(Route r) {
-        List<LatLong> l = new ArrayList<>(r.size());
-        for (int i = 0; i < r.size(); i++) l.add(new LatLong(r.lats[i], r.lons[i]));
-        return l;
+    private static Feature line(Route r) {
+        List<Point> pts = new ArrayList<>(r.size());
+        for (int i = 0; i < r.size(); i++) pts.add(Point.fromLngLat(r.lons[i], r.lats[i]));
+        return Feature.fromGeometry(LineString.fromLngLats(pts));
+    }
+
+    private static FeatureCollection empty() {
+        return FeatureCollection.fromFeatures(new ArrayList<>());
     }
 
     private void drawRoutes() {
-        if (mainLine == null) return;
-        List<LatLong> empty = new ArrayList<>();
-        mainLine.setPoints(routes.isEmpty() ? empty : toLatLongs(routes.get(selected)));
-        altLine.setPoints(routes.size() > 1 && !navigating ? toLatLongs(routes.get(1 - selected)) : empty);
-        mainLine.requestRedraw();
-        altLine.requestRedraw();
+        if (srcMain == null) return;
+        srcMain.setGeoJson(routes.isEmpty() ? empty() : FeatureCollection.fromFeature(line(routes.get(selected))));
+        srcAlt.setGeoJson(routes.size() > 1 && !navigating ? FeatureCollection.fromFeature(line(routes.get(1 - selected))) : empty());
     }
 
     private void zoomTo(Route r) {
-        double minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
-        for (int i = 0; i < r.size(); i++) {
-            minLat = Math.min(minLat, r.lats[i]);
-            maxLat = Math.max(maxLat, r.lats[i]);
-            minLon = Math.min(minLon, r.lons[i]);
-            maxLon = Math.max(maxLon, r.lons[i]);
+        if (map == null || r.size() < 2) return;
+        LatLngBounds.Builder b = new LatLngBounds.Builder();
+        for (int i = 0; i < r.size(); i += Math.max(1, r.size() / 300)) b.include(new LatLng(r.lats[i], r.lons[i]));
+        b.include(new LatLng(r.lats[r.size() - 1], r.lons[r.size() - 1]));
+        stopFollowing();
+        try {
+            int panel = routePanel.getHeight() > 0 ? routePanel.getHeight() : dp(260);
+            map.animateCamera(CameraUpdateFactory.newLatLngBounds(b.build(), dp(50), dp(130), dp(80), panel + dp(40)), 800);
+        } catch (Exception e) {
+            map.animateCamera(CameraUpdateFactory.newLatLngZoom(new LatLng(r.lats[0], r.lons[0]), 14));
         }
-        follow = false;
-        updateLocateButton();
-        mapView.setCenter(new LatLong((minLat + maxLat) / 2, (minLon + maxLon) / 2));
-        int w = Math.max(1, mapView.getWidth()), h = Math.max(1, mapView.getHeight() / 2);
-        double spanLon = Math.max(maxLon - minLon, 0.002), spanLat = Math.max(maxLat - minLat, 0.002) * 1.3;
-        double tile = mapView.getModel().displayModel.getTileSize();
-        double zLon = Math.log(w * 360.0 / (spanLon * tile)) / Math.log(2);
-        double zLat = Math.log(h * 360.0 / (spanLat * tile)) / Math.log(2);
-        int z = (int) Math.floor(Math.min(zLon, zLat));
-        mapView.setZoomLevel((byte) Math.max(6, Math.min(17, z)));
     }
 
     private void clearRoute() {
@@ -673,44 +914,45 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
         routeNames.clear();
         startPt = destPt = null;
         vias.clear();
-        updatePointMarkers();
+        updatePins();
         drawRoutes();
         routePanel.setVisibility(View.GONE);
     }
 
     private void showRouteOptions() {
+        RouteOptions o = savedOptions();
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(20), dp(8), dp(20), dp(8));
-        RadioGroup rg = new RadioGroup(this);
-        RadioButton fast = new RadioButton(this);
-        fast.setText("Fastest (less time)");
-        fast.setId(View.generateViewId());
-        RadioButton shortest = new RadioButton(this);
-        shortest.setText("Shortest (less km)");
-        shortest.setId(View.generateViewId());
-        rg.addView(fast);
-        rg.addView(shortest);
-        rg.check(prefs.getBoolean("fastest", true) ? fast.getId() : shortest.getId());
-        box.addView(rg);
-        CheckBox nh = check(box, "Prefer avoiding National Highways (NH)", prefs.getBoolean("avoidNH", false));
-        CheckBox sh = check(box, "Avoid State Highways (SH)", prefs.getBoolean("avoidSH", false));
-        CheckBox toll = check(box, "Avoid toll roads", prefs.getBoolean("avoidToll", false));
-        CheckBox kachcha = check(box, "Avoid kachcha / unpaved roads", prefs.getBoolean("avoidUnpaved", false));
-        CheckBox exp = check(box, "Allow expressways (two-wheelers usually not allowed)", prefs.getBoolean("allowExpressway", false));
+        CheckBox nh = check(box, "Prefer avoiding National Highways (NH)", o.avoidNH);
+        CheckBox sh = check(box, "Avoid State Highways (SH)", o.avoidSH);
+        CheckBox main = check(box, "Avoid all main roads (big & busy)", o.avoidMainRoads);
+        CheckBox small = check(box, "Avoid very small lanes & tracks", o.avoidSmallRoads);
+        CheckBox kachcha = check(box, "Avoid kachcha / unpaved roads", o.avoidUnpaved);
+        CheckBox fords = check(box, "Avoid water crossings / roads that flood (monsoon)", o.avoidFords);
+        CheckBox cities = check(box, "Avoid busy city & town centres", o.avoidCities);
+        CheckBox toll = check(box, "Avoid toll roads", o.avoidToll);
+        CheckBox exp = check(box, "Allow expressways (two-wheelers usually not allowed)", !o.avoidExpressway);
         TextView note = new TextView(this);
-        note.setText("Both routes (with and without NH) are always shown so you can compare.");
+        note.setText("Riding style (Fastest / Curvy / Extra curvy / Shortest) is chosen with the chips above the routes. "
+                + "Avoid = soft: the road is still used if there is no other way.");
         note.setTextColor(0xFF666666);
         note.setPadding(0, dp(8), 0, 0);
         box.addView(note);
         ScrollView sv = new ScrollView(this);
         sv.addView(box);
-        new AlertDialog.Builder(this).setTitle("Route options").setView(sv)
+        new AlertDialog.Builder(this).setTitle("Avoid roads").setView(sv)
                 .setPositiveButton("Apply", (d, w) -> {
-                    prefs.edit().putBoolean("fastest", rg.getCheckedRadioButtonId() == fast.getId())
-                            .putBoolean("avoidNH", nh.isChecked()).putBoolean("avoidSH", sh.isChecked())
-                            .putBoolean("avoidToll", toll.isChecked()).putBoolean("avoidUnpaved", kachcha.isChecked())
-                            .putBoolean("allowExpressway", exp.isChecked()).apply();
+                    o.avoidNH = nh.isChecked();
+                    o.avoidSH = sh.isChecked();
+                    o.avoidMainRoads = main.isChecked();
+                    o.avoidSmallRoads = small.isChecked();
+                    o.avoidUnpaved = kachcha.isChecked();
+                    o.avoidFords = fords.isChecked();
+                    o.avoidCities = cities.isChecked();
+                    o.avoidToll = toll.isChecked();
+                    o.avoidExpressway = !exp.isChecked();
+                    storeOptions(o);
                     if (destPt != null) computeRoutes();
                 })
                 .setNegativeButton("Cancel", null).show();
@@ -724,12 +966,131 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
         return c;
     }
 
+    // ------------------------------------------------------------------ saved trips
+
+    private String placeName(LatLng p) {
+        if (p == null) return "My location";
+        if (places == null) return String.format(Locale.US, "%.3f,%.3f", p.getLatitude(), p.getLongitude());
+        PlacesIndex.Place best = null;
+        double bestD = 1e18;
+        for (String cat : new String[]{"city", "town", "village"}) {
+            List<PlacesIndex.Place> l = places.nearest(cat, p.getLatitude(), p.getLongitude(), 1);
+            if (l.isEmpty()) continue;
+            PlacesIndex.Place pl = l.get(0);
+            double d = GeoUtil.distance(p.getLatitude(), p.getLongitude(), pl.lat, pl.lon);
+            double limit = cat.equals("city") ? 12000 : cat.equals("town") ? 5000 : 3000;
+            if (d < limit && d < bestD) {
+                best = pl;
+                bestD = d;
+            }
+        }
+        return best != null ? (best.name.isEmpty() ? best.nameHi : best.name)
+                : String.format(Locale.US, "%.3f,%.3f", p.getLatitude(), p.getLongitude());
+    }
+
+    private void saveTrip() {
+        if (destPt == null || routes.isEmpty()) return;
+        EditText input = new EditText(this);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        input.setText(placeName(startPt) + " → " + placeName(destPt));
+        input.setSelectAllOnFocus(true);
+        LinearLayout box = new LinearLayout(this);
+        box.setPadding(dp(20), dp(8), dp(20), 0);
+        box.addView(input, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        new AlertDialog.Builder(this).setTitle("Save this trip").setView(box)
+                .setPositiveButton("Save", (d, w) -> {
+                    TripStore.Trip t = new TripStore.Trip();
+                    t.name = input.getText().toString().trim().isEmpty() ? "Trip" : input.getText().toString().trim();
+                    t.created = System.currentTimeMillis();
+                    t.start = startPt == null ? null : new double[]{startPt.getLatitude(), startPt.getLongitude()};
+                    for (LatLng v : vias) t.vias.add(new double[]{v.getLatitude(), v.getLongitude()});
+                    t.dest = new double[]{destPt.getLatitude(), destPt.getLongitude()};
+                    Route r = routes.get(selected);
+                    t.options = r.options.encode();
+                    t.distanceM = r.distanceM;
+                    t.timeS = r.timeS;
+                    trips.add(t);
+                    Toast.makeText(this, "Trip saved – open it from 🧭 or menu ⋮ → My trips", Toast.LENGTH_LONG).show();
+                })
+                .setNeutralButton("Export GPX", (d, w) -> exportGpx(input.getText().toString(), routes.get(selected)))
+                .setNegativeButton("Cancel", null).show();
+    }
+
+    private void exportGpx(String name, Route r) {
+        String safe = name.replaceAll("[^A-Za-z0-9 _-]", "").trim().replace(' ', '_');
+        if (safe.isEmpty()) safe = "route";
+        String where = TripStore.saveToDownloads(this, safe + ".gpx", TripStore.routeGpx(name, r));
+        Toast.makeText(this, where != null ? "Saved: " + where : "Could not save GPX", Toast.LENGTH_LONG).show();
+    }
+
+    private void showTrips() {
+        List<TripStore.Trip> all = trips.all();
+        if (all.isEmpty()) {
+            new AlertDialog.Builder(this).setTitle("My trips")
+                    .setMessage("No saved trips yet.\n\nPlan a route and tap 💾 to save it.")
+                    .setPositiveButton("OK", null).show();
+            return;
+        }
+        String[] items = new String[all.size()];
+        for (int i = 0; i < all.size(); i++) {
+            TripStore.Trip t = all.get(i);
+            items[i] = t.name + "\n" + GeoUtil.formatDistance(t.distanceM) + " · " + GeoUtil.formatDuration(t.timeS)
+                    + " · " + RouteOptions.decode(t.options).describe();
+        }
+        new AlertDialog.Builder(this).setTitle("My trips (tap to open)")
+                .setItems(items, (d, which) -> tripActions(all.get(which)))
+                .setNegativeButton("Close", null).show();
+    }
+
+    private void tripActions(TripStore.Trip t) {
+        String[] items = {"🧭 Open & show route", "▶ Open & start ride", "✏ Rename", "🗑 Delete"};
+        new AlertDialog.Builder(this).setTitle(t.name).setItems(items, (d, w) -> {
+            switch (w) {
+                case 0:
+                case 1:
+                    openTrip(t, w == 1);
+                    break;
+                case 2: {
+                    EditText input = new EditText(this);
+                    input.setText(t.name);
+                    new AlertDialog.Builder(this).setTitle("Rename").setView(input)
+                            .setPositiveButton("OK", (d2, w2) -> {
+                                t.name = input.getText().toString().trim();
+                                trips.save();
+                            }).setNegativeButton("Cancel", null).show();
+                    break;
+                }
+                default:
+                    new AlertDialog.Builder(this).setMessage("Delete \"" + t.name + "\"?")
+                            .setPositiveButton("Delete", (d2, w2) -> trips.remove(t))
+                            .setNegativeButton("Cancel", null).show();
+            }
+        }).show();
+    }
+
+    private void openTrip(TripStore.Trip t, boolean ride) {
+        if (navigating) stopRide();
+        startPt = t.start == null ? null : new LatLng(t.start[0], t.start[1]);
+        vias.clear();
+        for (double[] v : t.vias) vias.add(new LatLng(v[0], v[1]));
+        destPt = new LatLng(t.dest[0], t.dest[1]);
+        RouteOptions o = RouteOptions.decode(t.options);
+        storeOptions(o);
+        buildModeChips();
+        updatePins();
+        computeRoutes();
+        if (ride) ui.postDelayed(() -> {
+            if (!routes.isEmpty()) startRide();
+        }, 2500);
+    }
+
     // ------------------------------------------------------------------ navigation
 
     private void startRide() {
         if (routes.isEmpty()) return;
         navigating = true;
         follow = true;
+        headingUp = false;
         offRouteCount = 0;
         navIndex = 0;
         updateLocateButton();
@@ -739,11 +1100,13 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
         drawRoutes();
         navMain.setText("Ride started");
         navSub.setText(myLoc == null ? "Waiting for GPS…" : "");
-        mapView.setZoomLevel((byte) 16);
-        if (myLoc != null) {
-            mapView.setCenter(new LatLong(myLoc.getLatitude(), myLoc.getLongitude()));
-            updateNavigation(myLoc);
+        if (lc != null) {
+            lc.setCameraMode(CameraMode.TRACKING_GPS);
+            lc.setRenderMode(RenderMode.GPS);
+            lc.zoomWhileTracking(16.5);
+            lc.tiltWhileTracking(45);
         }
+        if (myLoc != null) updateNavigation(myLoc);
         navPanel.setOnClickListener(v -> new AlertDialog.Builder(this).setMessage("Stop the ride navigation?")
                 .setPositiveButton("Stop", (d, w) -> stopRide()).setNegativeButton("Continue", null).show());
         if (!TrackRecorder.get().isRecording() && prefs.getBoolean("autoRecord", true)) {
@@ -757,6 +1120,11 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
         navigating = false;
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         navPanel.setVisibility(View.GONE);
+        if (lc != null) {
+            lc.setRenderMode(RenderMode.COMPASS);
+            lc.setCameraMode(follow ? CameraMode.TRACKING : CameraMode.NONE);
+            lc.tiltWhileTracking(0);
+        }
         if (!routes.isEmpty()) {
             routePanel.setVisibility(View.VISIBLE);
             showRoutes(false);
@@ -767,7 +1135,6 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
         if (routes.isEmpty() || rerouting) return;
         Route r = routes.get(selected);
         double lat = l.getLatitude(), lon = l.getLongitude();
-        // nearest point on the route, searching around the last position first
         int bestI = -1;
         double bestD = Double.MAX_VALUE, bestT = 0;
         int from = Math.max(0, navIndex - 30), to = Math.min(r.size() - 1, navIndex + 600);
@@ -792,7 +1159,9 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
         if (remaining < 40 || GeoUtil.distance(lat, lon, r.lats[r.size() - 1], r.lons[r.size() - 1]) < 30) {
             navMain.setText("🏁 You have arrived!");
             navSub.setText("");
-            stopRideLater();
+            ui.postDelayed(() -> {
+                if (navigating) stopRide();
+            }, 8000);
             return;
         }
         float acc = l.hasAccuracy() ? l.getAccuracy() : 50;
@@ -809,27 +1178,21 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
         for (int i = 0; i < r.steps.size(); i++) {
             Route.Step s = r.steps.get(i);
             if (s.startPoint <= bestI) cur = s;
-            else {
+            else if (s.name != null || next == null) {
                 next = s;
-                break;
+                if (s.name != null) break;
             }
         }
         navMain.setText(GeoUtil.formatDistance(remaining) + "  ·  " + GeoUtil.formatDuration(remainingTime) + " left");
         StringBuilder sub = new StringBuilder();
-        sub.append("On: ").append(cur == null || cur.name == null ? "unnamed road" : cur.name);
+        sub.append("On: ").append(cur == null || cur.name == null ? "local road" : cur.name);
         if (next != null) {
             double toNext = r.cumDist[Math.min(next.startPoint, r.size() - 1)] - done;
-            sub.append("\nNext: ").append(next.name == null ? "unnamed road" : next.name)
+            sub.append("\nNext: ").append(next.name == null ? "local road" : next.name)
                     .append(" in ").append(GeoUtil.formatDistance(Math.max(0, toNext)));
         }
         if (offRouteCount > 0) sub.append("\n⚠ Off route?");
         navSub.setText(sub.toString());
-    }
-
-    private void stopRideLater() {
-        ui.postDelayed(() -> {
-            if (navigating) stopRide();
-        }, 8000);
     }
 
     private void reroute(Location l) {
@@ -858,7 +1221,7 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
                 selected = 0;
                 navIndex = 0;
                 vias.clear();
-                updatePointMarkers();
+                updatePins();
                 drawRoutes();
                 Toast.makeText(this, "New route: " + GeoUtil.formatDistance(fr.distanceM), Toast.LENGTH_SHORT).show();
             });
@@ -904,11 +1267,15 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
         btnRecord.setText(rec ? "■" : "⏺");
         recordInfo.setVisibility(rec ? View.VISIBLE : View.GONE);
         if (rec) recordInfo.setText("⏺ " + trackText());
-        if (trackLine != null) {
-            List<LatLong> pts = new ArrayList<>();
-            if (rec) for (double[] p : t.points()) pts.add(new LatLong(p[0], p[1]));
-            trackLine.setPoints(pts);
-            trackLine.requestRedraw();
+        if (srcTrack != null) {
+            List<double[]> pts = rec ? t.points() : new ArrayList<>();
+            if (pts.size() >= 2) {
+                List<Point> ps = new ArrayList<>(pts.size());
+                for (double[] p : pts) ps.add(Point.fromLngLat(p[1], p[0]));
+                srcTrack.setGeoJson(FeatureCollection.fromFeature(Feature.fromGeometry(LineString.fromLngLats(ps))));
+            } else {
+                srcTrack.setGeoJson(empty());
+            }
         }
     }
 
@@ -1010,33 +1377,35 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
 
     private double[] refPoint() {
         if (myLoc != null) return new double[]{myLoc.getLatitude(), myLoc.getLongitude()};
-        LatLong c = mapView.getModel().mapViewPosition.getCenter();
-        return new double[]{c.latitude, c.longitude};
+        if (map != null && map.getCameraPosition().target != null) {
+            LatLng c = map.getCameraPosition().target;
+            return new double[]{c.getLatitude(), c.getLongitude()};
+        }
+        return new double[]{BHOPAL.getLatitude(), BHOPAL.getLongitude()};
     }
 
     private void showPlace(PlacesIndex.Place p) {
-        LatLong ll = new LatLong(p.lat, p.lon);
-        removeLayer(searchMarker);
-        searchMarker = addMarker(ll, 0xFF6A1B9A, "•");
-        follow = false;
-        updateLocateButton();
-        mapView.setCenter(ll);
-        mapView.setZoomLevel((byte) (p.category.equals("city") ? 12 : p.category.equals("town") ? 13 : 15));
+        LatLng ll = new LatLng(p.lat, p.lon);
+        searchPt = ll;
+        updatePins();
+        stopFollowing();
+        if (map != null) {
+            double z = p.category.equals("city") ? 12 : p.category.equals("town") ? 13 : 15;
+            map.animateCamera(CameraUpdateFactory.newLatLngZoom(ll, z), 900);
+        }
         double[] ref = refPoint();
         new AlertDialog.Builder(this).setTitle(p.title())
                 .setMessage(p.label() + "\n" + GeoUtil.formatDistance(GeoUtil.distance(ref[0], ref[1], p.lat, p.lon)) + " away (straight line)")
                 .setPositiveButton("🧭 Route here", (d, w) -> {
                     destPt = ll;
-                    removeLayer(searchMarker);
-                    searchMarker = null;
-                    updatePointMarkers();
+                    searchPt = null;
+                    updatePins();
                     computeRoutes();
                 })
                 .setNeutralButton("Set as start", (d, w) -> {
                     startPt = ll;
-                    removeLayer(searchMarker);
-                    searchMarker = null;
-                    updatePointMarkers();
+                    searchPt = null;
+                    updatePins();
                     if (destPt != null) computeRoutes();
                 })
                 .setNegativeButton("Close", null).show();
@@ -1045,28 +1414,34 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
     // ------------------------------------------------------------------ menu
 
     private void showMenu() {
-        String lang = prefs.getString("lang", "en");
         String[] items = {
-                "🔤 Map labels: " + ("hi".equals(lang) ? "हिंदी → switch to English" : "English → switch to हिंदी"),
+                "📂 My saved trips",
+                satellite ? "🗺 Switch to normal map" : "🛰 Switch to satellite view",
+                "🛰 Save satellite for my route area (offline)",
+                "🛰 Save satellite for the visible area (offline)",
+                "🗑 Delete saved satellite",
                 "🗺 Clear route & markers",
                 "📁 Where are my rides saved?",
                 "ℹ About & offline data",
         };
         new AlertDialog.Builder(this).setItems(items, (d, which) -> {
             switch (which) {
-                case 0:
-                    prefs.edit().putString("lang", "hi".equals(lang) ? "en" : "hi").apply();
-                    recreate();
+                case 0: showTrips(); break;
+                case 1: setSatellite(!satellite, true); break;
+                case 2: saveSatellite(true); break;
+                case 3: saveSatellite(false); break;
+                case 4:
+                    OfflineSatellite.deleteAll(this, () -> Toast.makeText(this, "Saved satellite deleted", Toast.LENGTH_SHORT).show());
                     break;
-                case 1:
+                case 5:
                     clearRoute();
-                    removeLayer(searchMarker);
-                    searchMarker = null;
+                    searchPt = null;
+                    updatePins();
                     break;
-                case 2:
-                    new AlertDialog.Builder(this).setTitle("Saved rides (GPX)")
-                            .setMessage("Rides are saved as GPX files in:\n\nDownload/BikeRidingMP/\n\n(and a copy in "
-                                    + TrackRecorder.tracksDir(this).getAbsolutePath() + ")\n\nOpen them in any GPX app or share on WhatsApp.")
+                case 6:
+                    new AlertDialog.Builder(this).setTitle("Saved rides & routes (GPX)")
+                            .setMessage("Recorded rides and exported routes are saved as GPX files in:\n\nDownload/BikeRidingMP/\n\n"
+                                    + "Open them in any GPX app or share on WhatsApp.")
                             .setPositiveButton("OK", null).show();
                     break;
                 default:
@@ -1082,7 +1457,12 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
         sb.append("Map data version: ").append(v.isEmpty() ? "none" : v).append('\n');
         if (router != null) sb.append("Road network: ").append(router.graph().nodeCount).append(" junctions\n");
         if (places != null) sb.append("Searchable places: ").append(places.size()).append('\n');
-        sb.append("\nMap data © OpenStreetMap contributors (ODbL). Rendering: mapsforge (LGPL).");
+        sb.append("Saved trips: ").append(trips.all().size()).append('\n');
+        sb.append("\nTips: 2 fingers to rotate & tilt the map. Tap the compass to face north. "
+                + "Tap ◎ twice to make the map turn with you.\n");
+        sb.append("\nMap data © OpenStreetMap contributors (ODbL), © OpenMapTiles. Style: OpenFreeMap Liberty. "
+                + "Satellite: Sentinel-2 cloudless – s2maps.eu by EOX IT Services GmbH (contains modified Copernicus "
+                + "Sentinel data). Map engine: MapLibre.");
         new AlertDialog.Builder(this).setTitle(getString(R.string.app_name)).setMessage(sb.toString())
                 .setPositiveButton("OK", null).show();
     }
@@ -1093,13 +1473,9 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
         return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, getResources().getDisplayMetrics()));
     }
 
-    private Bitmap toBitmap(android.graphics.Bitmap b) {
-        return AndroidGraphicFactory.convertToBitmap(new BitmapDrawable(getResources(), b));
-    }
-
-    private android.graphics.Bitmap drawPin(int color, String letter) {
+    private Bitmap drawPin(int color, String letter) {
         int w = dp(30), h = dp(38);
-        android.graphics.Bitmap bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888);
+        Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(bmp);
         android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
         float r = w / 2f - dp(2);
@@ -1120,18 +1496,6 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
         p.setTypeface(Typeface.DEFAULT_BOLD);
         p.setTextAlign(android.graphics.Paint.Align.CENTER);
         c.drawText(letter, w / 2f, r + dp(2) + dp(5), p);
-        return bmp;
-    }
-
-    private android.graphics.Bitmap drawDot() {
-        int s = dp(22);
-        android.graphics.Bitmap bmp = android.graphics.Bitmap.createBitmap(s, s, android.graphics.Bitmap.Config.ARGB_8888);
-        Canvas c = new Canvas(bmp);
-        android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
-        p.setColor(Color.WHITE);
-        c.drawCircle(s / 2f, s / 2f, s / 2f, p);
-        p.setColor(0xFF1565C0);
-        c.drawCircle(s / 2f, s / 2f, s / 2f - dp(3), p);
         return bmp;
     }
 }

@@ -19,6 +19,8 @@ sections:
   edgeA int[E], edgeB int[E], edgeLen float[E]  (metres)
   edgeName int[E] (-1 = none), edgeShapeStart int[E+1]
   edgeClass byte[E], edgeFlags byte[E], edgeSpeed byte[E]   (each padded to 4)
+  edgeCurv byte[E]  (curviness: degrees turned per km / 2, 0..255)          [v2]
+  edgeFlags2 byte[E] (bit0 ford/water crossing, bit1 urban area)           [v2]
   shapeLat int[S], shapeLon int[S]              (full polyline of each edge, A..B inclusive)
   gridStart int[rows*cols+1], gridEdges int[G]
   nameOffsets int[nameCount+1], nameBytes byte[nameBytes] (UTF-8, padded)
@@ -28,7 +30,7 @@ import struct
 import numpy as np
 
 MAGIC = 0x4752504D  # bytes "MPRG" little-endian
-VERSION = 1
+VERSION = 2
 
 # road classes (must match RoadClass in the app)
 C_MOTORWAY, C_TRUNK, C_PRIMARY, C_SECONDARY, C_TERTIARY, C_UNCLASSIFIED, \
@@ -42,6 +44,9 @@ F_UNPAVED = 8
 F_EXPRESSWAY = 16
 F_LINK = 32
 F_FERRY = 64
+# second flag byte (stored as bits 8.. in Python)
+F_FORD = 256
+F_URBAN = 512
 
 HIGHWAY_CLASS = {
     'motorway': (C_MOTORWAY, 80), 'motorway_link': (C_MOTORWAY, 50),
@@ -90,6 +95,8 @@ def classify_way(tags):
         flags |= F_LINK
     if tags.get('toll') == 'yes':
         flags |= F_TOLL
+    if tags.get('ford') in ('yes', 'stepping_stones') or tags.get('flood_prone') == 'yes':
+        flags |= F_FORD
     surface = tags.get('surface')
     if hw == 'track' or surface in UNPAVED:
         flags |= F_UNPAVED
@@ -131,7 +138,7 @@ class RoadCollector:
         self.lon = array('i')
         self.way_len = array('i')
         self.cls = array('b')
-        self.flags = array('B')
+        self.flags = array('H')
         self.speed = array('B')
         self.oneway = array('b')
         self.label = array('i')
@@ -197,7 +204,8 @@ def _largest_component(n, a, b):
     return parent == biggest
 
 
-def build_graph(rc, cell_deg=0.01, keep_largest_component=True, log=print):
+def build_graph(rc, cell_deg=0.01, keep_largest_component=True, log=print, urban_centers=()):
+    """urban_centers: iterable of (lat, lon, radius_m) – edges whose middle is inside get F_URBAN."""
     ids = np.frombuffer(rc.ids, dtype=np.int64)
     lat = np.frombuffer(rc.lat, dtype=np.int32)
     lon = np.frombuffer(rc.lon, dtype=np.int32)
@@ -257,7 +265,7 @@ def build_graph(rc, cell_deg=0.01, keep_largest_component=True, log=print):
     log(f'graph: {N} nodes, {E} edges')
 
     ecls = np.frombuffer(rc.cls, dtype=np.int8)[w]
-    eflags = np.frombuffer(rc.flags, dtype=np.uint8)[w]
+    eflags = np.frombuffer(rc.flags, dtype=np.uint16)[w].copy()
     espeed = np.frombuffer(rc.speed, dtype=np.uint8)[w]
     eoneway = np.frombuffer(rc.oneway, dtype=np.int8)[w]
     ename = np.frombuffer(rc.label, dtype=np.int32)[w]
@@ -317,9 +325,47 @@ def build_graph(rc, cell_deg=0.01, keep_largest_component=True, log=print):
     grid_start = np.concatenate(([0], np.cumsum(np.bincount(gcell, minlength=rows * cols)))).astype(np.int32)
     log(f'grid: {rows}x{cols} cells, {len(gedge)} entries')
 
+    # urban areas
+    if len(urban_centers) and E:
+        mid = (sstart[:-1] + sstart[1:] - 1) // 2   # middle shape point of each edge
+        alat = shape_lat[mid] / 1e6
+        alon = shape_lon[mid] / 1e6
+        urban = np.zeros(E, dtype=bool)
+        for (clat, clon, rad) in urban_centers:
+            dlat = rad / 111000.0
+            m = np.abs(alat - clat) < dlat
+            if not m.any():
+                continue
+            idx = np.nonzero(m)[0]
+            d = _haversine(alat[idx], alon[idx], clat, clon)
+            urban[idx[d < rad]] = True
+        eflags[urban] |= F_URBAN
+        log(f'urban edges: {int(urban.sum())}')
+
+    # curviness: total turning angle along the edge per km
+    curv = np.zeros(E, dtype=np.uint8)
+    if len(seg_from) > 1:
+        la1 = shape_lat[seg_from] / 1e6
+        lo1 = shape_lon[seg_from] / 1e6
+        la2 = shape_lat[seg_from + 1] / 1e6
+        lo2 = shape_lon[seg_from + 1] / 1e6
+        k = np.cos(np.radians(la1))
+        dx = (lo2 - lo1) * k
+        dy = la2 - la1
+        seglen = np.sqrt(dx * dx + dy * dy) * 111195.0
+        head = np.degrees(np.arctan2(dy, dx))
+        consecutive = (seg_from[1:] == seg_from[:-1] + 1) & (seg_edge[1:] == seg_edge[:-1]) \
+            & (seglen[1:] > 3) & (seglen[:-1] > 3)
+        turn = np.abs((head[1:] - head[:-1] + 180.0) % 360.0 - 180.0)
+        turn = np.where(consecutive, turn, 0.0)
+        total = np.bincount(seg_edge[1:], weights=turn, minlength=E)
+        per_km = total / np.maximum(elen.astype(np.float64) / 1000.0, 0.3)
+        curv = np.minimum(255, per_km / 2.0).astype(np.uint8)
+    log(f'curvy edges (>60 deg/km): {int((curv > 30).sum())}')
+
     return dict(N=N, E=E, S=S, node_lat=node_lat, node_lon=node_lon, adj_start=adj_start, adj=adj,
                 A=A.astype(np.int32), B=B.astype(np.int32), elen=elen, ename=ename.astype(np.int32),
-                sstart=sstart.astype(np.int32), ecls=ecls, eflags=eflags, espeed=espeed,
+                sstart=sstart.astype(np.int32), ecls=ecls, eflags=eflags, espeed=espeed, curv=curv,
                 shape_lat=shape_lat, shape_lon=shape_lon, rows=rows, cols=cols, min_lat=min_lat,
                 min_lon=min_lon, cell=cell, grid_start=grid_start, grid_edges=gedge,
                 names=rc.label_list)
@@ -349,8 +395,10 @@ def write_graph(g, path):
         f.write(i4(g['ename']))
         f.write(i4(g['sstart']))
         f.write(_pad4(np.ascontiguousarray(g['ecls'], dtype=np.int8).tobytes()))
-        f.write(_pad4(np.ascontiguousarray(g['eflags'], dtype=np.uint8).tobytes()))
+        f.write(_pad4(np.ascontiguousarray(g['eflags'] & 0xff, dtype=np.uint8).tobytes()))
         f.write(_pad4(np.ascontiguousarray(g['espeed'], dtype=np.uint8).tobytes()))
+        f.write(_pad4(np.ascontiguousarray(g['curv'], dtype=np.uint8).tobytes()))
+        f.write(_pad4(np.ascontiguousarray(g['eflags'] >> 8, dtype=np.uint8).tobytes()))
         f.write(i4(g['shape_lat']))
         f.write(i4(g['shape_lon']))
         f.write(i4(g['grid_start']))

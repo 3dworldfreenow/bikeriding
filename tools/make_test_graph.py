@@ -32,12 +32,16 @@ def main(out):
     rc = graphlib.RoadCollector()
     # NH with an intermediate shape point (id 100)
     way(rc, [X, (100, 23.0005, 77.125), M, Y], {'highway': 'trunk', 'ref': 'NH46'})
-    way(rc, [X, V1, (101, 23.085, 77.25), V2, Y], {'highway': 'unclassified', 'name': 'Gaon Road'})
+    # village road: wiggly so it is "curvy"
+    wig = [(1000 + i, 23.080 + (0.0015 if i % 2 else -0.0015), 77.06 + i * 0.002) for i in range(195)]
+    way(rc, [X, V1] + wig + [V2, Y], {'highway': 'unclassified', 'name': 'Gaon Road'})
+    # a ford on a short side road from M going north
+    way(rc, [M, (400, 23.02, 77.25)], {'highway': 'unclassified', 'name': 'Nala Crossing', 'ford': 'yes'})
     way(rc, [X, (102, 22.990, 77.25), Y], {'highway': 'motorway', 'ref': 'NE3', 'name': 'Test Expressway'})
     way(rc, [M, S], {'highway': 'residential', 'name': 'Spur Lane', 'oneway': 'yes'})
     # an island road that must be dropped (not connected)
     way(rc, [(200, 24.0, 78.0), (201, 24.01, 78.01)], {'highway': 'residential'})
-    g = graphlib.build_graph(rc, log=lambda *a: None)
+    g = graphlib.build_graph(rc, log=lambda *a: None, urban_centers=[(23.0, 77.0, 3000.0), (23.0005, 77.125, 2000.0)])
     graphlib.write_graph(g, out)
     print('wrote', out, g['N'], 'nodes', g['E'], 'edges')
 

@@ -24,11 +24,13 @@ public final class Graph {
 
     // flags
     public static final int F_NH = 1, F_SH = 2, F_TOLL = 4, F_UNPAVED = 8, F_EXPRESSWAY = 16, F_LINK = 32;
+    // second flag byte (v2), returned shifted by 8 from edgeFlags()
+    public static final int F_FORD = 256, F_URBAN = 512;
 
     public final int nodeCount, edgeCount, shapeCount;
     final IntBuffer nodeLat, nodeLon, adjStart, adj, edgeA, edgeB, edgeName, edgeShapeStart;
     final FloatBuffer edgeLen;
-    final ByteBuffer edgeClass, edgeFlags, edgeSpeed;
+    final ByteBuffer edgeClass, edgeFlags, edgeSpeed, edgeCurv, edgeFlags2;
     final IntBuffer shapeLat, shapeLon, gridStart, gridEdges, nameOffsets;
     final ByteBuffer nameBytes;
     final int gridRows, gridCols, gridMinLat, gridMinLon, cellSize;
@@ -53,7 +55,8 @@ public final class Graph {
         int[] h = new int[16];
         for (int i = 0; i < 16; i++) h[i] = b.getInt(i * 4);
         if (h[0] != MAGIC) throw new IllegalArgumentException("not a routing graph file");
-        if (h[1] != 1) throw new IllegalArgumentException("unsupported graph version " + h[1]);
+        if (h[1] != 1 && h[1] != 2) throw new IllegalArgumentException("unsupported graph version " + h[1]);
+        boolean v2 = h[1] >= 2;
         nodeCount = h[2];
         edgeCount = h[3];
         shapeCount = h[4];
@@ -80,6 +83,8 @@ public final class Graph {
         edgeClass = c.bytes(edgeCount);
         edgeFlags = c.bytes(edgeCount);
         edgeSpeed = c.bytes(edgeCount);
+        edgeCurv = v2 ? c.bytes(edgeCount) : ByteBuffer.allocate(edgeCount);
+        edgeFlags2 = v2 ? c.bytes(edgeCount) : ByteBuffer.allocate(edgeCount);
         shapeLat = c.ints(shapeCount);
         shapeLon = c.ints(shapeCount);
         gridStart = c.ints(gridRows * gridCols + 1);
@@ -130,7 +135,9 @@ public final class Graph {
     public int edgeB(int e) { return edgeB.get(e); }
     public double edgeLength(int e) { return edgeLen.get(e); }
     public int edgeClass(int e) { return edgeClass.get(e); }
-    public int edgeFlags(int e) { return edgeFlags.get(e) & 0xff; }
+    public int edgeFlags(int e) { return (edgeFlags.get(e) & 0xff) | ((edgeFlags2.get(e) & 0xff) << 8); }
+    /** curviness in degrees turned per km */
+    public int edgeCurvDegPerKm(int e) { return (edgeCurv.get(e) & 0xff) * 2; }
     public int edgeSpeedKmh(int e) { return edgeSpeed.get(e) & 0xff; }
     public int shapeStart(int e) { return edgeShapeStart.get(e); }
     public int shapeEnd(int e) { return edgeShapeStart.get(e + 1); }

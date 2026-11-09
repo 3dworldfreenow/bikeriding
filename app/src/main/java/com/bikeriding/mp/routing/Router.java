@@ -120,29 +120,48 @@ public final class Router {
 
     // ------------------------------------------------------------------ costs
 
-    /** Cost of the whole edge in that direction, or +Infinity if not allowed by the options. */
+    /** Cost of the whole edge, or +Infinity if not allowed by the options. */
     private double cost(int e, RouteOptions o) {
         int f = g.edgeFlags(e);
         if (o.avoidExpressway && (f & Graph.F_EXPRESSWAY) != 0) return Double.POSITIVE_INFINITY;
         double len = g.edgeLength(e);
-        double c = o.fastest ? len / (g.edgeSpeedKmh(e) / 3.6) : len;
+        double c = o.fastestLike() ? len / (g.edgeSpeedKmh(e) / 3.6) : len;
+        int cls = g.edgeClass(e);
+        boolean urban = (f & Graph.F_URBAN) != 0;
         double m = 1;
         if (o.avoidNH && (f & Graph.F_NH) != 0) m *= o.avoidFactor;
         if (o.avoidSH && (f & Graph.F_SH) != 0) m *= o.avoidFactor;
         if (o.avoidToll && (f & Graph.F_TOLL) != 0) m *= o.avoidFactor;
         if (o.avoidUnpaved && (f & Graph.F_UNPAVED) != 0) m *= o.avoidFactor;
-        if (!o.fastest) {
-            // shortest: still prefer real roads over tracks a little
-            int cls = g.edgeClass(e);
-            if (cls == Graph.C_TRACK) m *= 1.5;
-            else if (cls == Graph.C_SERVICE) m *= 1.2;
+        if (o.avoidFords && (f & Graph.F_FORD) != 0) m *= o.avoidFactor * 3;
+        if (o.avoidMainRoads && (cls == Graph.C_TRUNK || cls == Graph.C_PRIMARY)) m *= 4;
+        if (o.avoidSmallRoads && cls >= Graph.C_RESIDENTIAL) m *= 4;
+        if (o.avoidCities && urban) m *= 3;
+        switch (o.mode) {
+            case RouteOptions.MODE_CURVY:
+            case RouteOptions.MODE_EXTRA_CURVY: {
+                boolean extra = o.mode == RouteOptions.MODE_EXTRA_CURVY;
+                // like Kurviger: straight roads cost more, twisty roads cost less (relatively)
+                double curvy = Math.min(1.0, g.edgeCurvDegPerKm(e) / 150.0);
+                m *= 1 + (extra ? 2.0 : 0.8) * (1 - curvy);
+                if (urban) m *= extra ? 2.5 : 1.5;
+                if (cls <= Graph.C_TRUNK) m *= extra ? 1.8 : 1.3;
+                if (cls >= Graph.C_SERVICE) m *= 1.5;
+                break;
+            }
+            case RouteOptions.MODE_SHORTEST:
+                if (cls == Graph.C_TRACK) m *= 1.5;
+                else if (cls == Graph.C_SERVICE) m *= 1.2;
+                break;
+            default:
+                break;
         }
         return c * m;
     }
 
     private double heuristic(int n, double tlat, double tlon, RouteOptions o) {
         double d = GeoUtil.distance(g.nodeLat(n), g.nodeLon(n), tlat, tlon) * 0.99;
-        return o.fastest ? d / (g.maxSpeedKmh / 3.6) : d;
+        return o.fastestLike() ? d / (g.maxSpeedKmh / 3.6) : d;
     }
 
     // ------------------------------------------------------------------ routing
@@ -279,6 +298,8 @@ public final class Router {
         if ((f & Graph.F_TOLL) != 0) r.tollM += meters;
         if ((f & Graph.F_UNPAVED) != 0) r.unpavedM += meters;
         if ((f & Graph.F_EXPRESSWAY) != 0) r.expresswayM += meters;
+        if ((f & Graph.F_FORD) != 0) r.fordM += meters;
+        if (g.edgeCurvDegPerKm(e) >= 60) r.curvyM += meters;
         String name = g.edgeName(e);
         Route.Step last = r.steps.isEmpty() ? null : r.steps.get(r.steps.size() - 1);
         if (last != null && (name == null ? last.name == null : name.equals(last.name))) {

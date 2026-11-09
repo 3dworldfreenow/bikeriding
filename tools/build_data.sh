@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Builds all offline data for the app from OpenStreetMap:
-#   app/src/main/assets/mp.map      – Mapsforge vector map (drawn on the phone)
-#   app/src/main/assets/mp.graph    – routing graph (trip planning, avoid NH/SH ...)
-#   app/src/main/assets/places.tsv  – offline search (villages, towns, fuel pumps ...)
+#   app/src/main/assets/mp.pmtiles  – vector tiles (OpenMapTiles schema, drawn by MapLibre)  [part "tiles"]
+#   app/src/main/assets/mapstyle/   – offline map style, fonts, icons                        [part "tiles"]
+#   app/src/main/assets/mp.graph    – routing graph (trip planning, avoid NH/SH ...)          [part "graph"]
+#   app/src/main/assets/places.tsv  – offline search (villages, towns, fuel pumps ...)        [part "graph"]
+#
+# PARTS="graph tiles" (default both) chooses what to build.
 #
 # Needs: curl, osmium-tool, python3 + pip packages osmium numpy, Java 17+.
 # Runs on GitHub Actions (see .github/workflows/build.yml) or any Linux box.
@@ -19,8 +22,7 @@ OUT="${OUT:-$ROOT/app/src/main/assets}"
 REGION_NAME="${REGION_NAME:-Madhya Pradesh}"
 SRC_URL="${SRC_URL:-https://download.geofabrik.de/asia/india-latest.osm.pbf}"
 FALLBACK_BBOX="${FALLBACK_BBOX:-21.0,74.0,26.9,82.85}"
-OSMOSIS_VERSION="${OSMOSIS_VERSION:-0.49.2}"
-MAPSFORGE_VERSION="${MAPSFORGE_VERSION:-0.25.0}"
+PARTS="${PARTS:-graph tiles}"
 JAVA_HEAP="${JAVA_HEAP:-10g}"
 
 mkdir -p "$WORK" "$OUT"
@@ -48,47 +50,21 @@ else
 fi
 ls -lh region.osm.pbf
 
-echo "== 3/5 routing graph + places"
-osmium tags-filter --overwrite region.osm.pbf w/highway nw/place nw/amenity nw/tourism nw/shop \
-  nw/historic n/natural=waterfall nw/craft -o filtered.osm.pbf
-python3 "$ROOT/tools/build_graph.py" filtered.osm.pbf "$WORK/out"
+has_part() { case " $PARTS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
-echo "== 4/5 vector map (mapsforge)"
-OSMOSIS="$(find "$WORK" -path '*bin/osmosis' -type f 2>/dev/null | head -1 || true)"
-if [ -z "$OSMOSIS" ]; then
-  base="https://github.com/openstreetmap/osmosis/releases/download/$OSMOSIS_VERSION/osmosis-$OSMOSIS_VERSION"
-  for ext in tar tgz zip; do
-    if curl -fL --retry 3 -o "osmosis.$ext" "$base.$ext"; then
-      mkdir -p osmosis-dist && cd osmosis-dist
-      case $ext in zip) unzip -q "../osmosis.$ext" ;; *) tar xf "../osmosis.$ext" ;; esac
-      cd ..
-      break
-    fi
-  done
-  OSMOSIS="$(find "$WORK" -path '*bin/osmosis' -type f 2>/dev/null | head -1 || true)"
+if has_part graph; then
+  echo "== 3/5 routing graph + places"
+  osmium tags-filter --overwrite region.osm.pbf w/highway nw/place nw/amenity nw/tourism nw/shop \
+    nw/historic n/natural=waterfall nw/craft -o filtered.osm.pbf
+  python3 "$ROOT/tools/build_graph.py" filtered.osm.pbf "$WORK/out"
+  cp "$WORK/out/mp.graph" "$WORK/out/places.tsv" "$OUT/"
+  date -u +%Y%m%d%H%M > "$OUT/data_version.txt"
 fi
-if [ -z "$OSMOSIS" ]; then
-  echo "osmosis download failed, trying the system package"
-  sudo apt-get install -y -q osmosis
-  OSMOSIS="$(command -v osmosis)"
-fi
-chmod +x "$OSMOSIS"
-"$OSMOSIS" -v 2>&1 | head -3 || true
-PLUGIN_DIR="$HOME/.openstreetmap/osmosis/plugins"
-mkdir -p "$PLUGIN_DIR"
-WRITER="mapsforge-map-writer-$MAPSFORGE_VERSION-jar-with-dependencies.jar"
-if [ ! -s "$PLUGIN_DIR/$WRITER" ]; then
-  curl -fL --retry 3 -o "$PLUGIN_DIR/$WRITER" \
-    "https://repo1.maven.org/maven2/org/mapsforge/mapsforge-map-writer/$MAPSFORGE_VERSION/$WRITER"
-fi
-IFS=, read -r a b c d <<< "$BBOX"
-CENTER="23.2599,77.4126"   # Bhopal
-JAVACMD_OPTIONS="-Xmx$JAVA_HEAP" "$OSMOSIS" --rbf file=region.osm.pbf workers=2 \
-  --mapfile-writer file="$WORK/out/mp.map" type=hd threads=2 \
-  bbox="$a,$b,$c,$d" map-start-position="$CENTER" map-start-zoom=8 \
-  preferred-languages=en,hi comment="Madhya Pradesh - data (c) OpenStreetMap contributors (ODbL)"
 
-echo "== 5/5 copy to app assets"
-cp "$WORK/out/mp.map" "$WORK/out/mp.graph" "$WORK/out/places.tsv" "$OUT/"
-date -u +%Y%m%d%H%M > "$OUT/data_version.txt"
-ls -lh "$OUT"
+if has_part tiles; then
+  echo "== 4/5 vector tiles + offline style"
+  BBOX="$BBOX" JAVA_HEAP="$JAVA_HEAP" "$ROOT/tools/build_tiles.sh" "$WORK/region.osm.pbf" "$WORK/tiles" "$OUT"
+fi
+
+echo "== 5/5 done"
+ls -lhR "$OUT" | head -40

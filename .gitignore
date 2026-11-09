@@ -14,3 +14,5 @@ app/src/main/assets/places.tsv
 app/src/main/assets/data_version.txt
 *.keystore
 *.jks
+app/src/main/assets/mp.pmtiles
+app/src/main/assets/mapstyle/
