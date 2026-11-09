@@ -36,7 +36,7 @@ java -Xmx"$JAVA_HEAP" -jar planetiler.jar openmaptiles \
   --water-polygons-path="$SRC/water-polygons-split-3857.zip" \
   --natural-earth-path="$SRC/natural_earth_vector.sqlite.zip" \
   --lake-centerlines-path="$SRC/lake_centerline.shp.zip" \
-  --bounds="$b,$a,$d,$c" --maxzoom=14 \
+  --bounds="$b,$a,$d,$c" --maxzoom=13 \
   --exclude-layers=housenumber,building \
   --output="$WORK/mp.pmtiles" --force
 ls -lh mp.pmtiles

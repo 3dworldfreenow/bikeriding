@@ -123,6 +123,20 @@ public class RouterTest {
     }
 
     @Test
+    public void turnsDetected() throws Exception {
+        // X -> M on NH (east), then right turn south onto the spur
+        Route r = router.route(23.0, 77.01, 22.96, 77.25, new RouteOptions());
+        assertTrue("one turn expected, got " + r.turns.size(), r.turns.size() == 1);
+        Route.Turn t = r.turns.get(0);
+        assertTrue("right turn expected, angle " + t.angle, t.isRight() && Math.abs(t.angle) > 60);
+        assertEquals("Spur Lane", t.onto);
+        assertTrue(r.nextTurn(0) == t && r.nextTurn(r.distanceM) == null);
+        // straight along the NH through M: no turn
+        Route s = router.route(23.0, 77.01, 23.0, 77.45, new RouteOptions());
+        assertEquals(0, s.turns.size());
+    }
+
+    @Test
     public void snapFar() {
         assertNull(router.snap(26.0, 80.0, 5000));
         assertNotNull(router.snap(23.01, 77.2, 5000));

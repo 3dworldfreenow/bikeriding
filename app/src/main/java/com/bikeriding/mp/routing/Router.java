@@ -368,6 +368,9 @@ public final class Router {
                 int e = p >>> 1;
                 int s0 = g.shapeStart(e), s1 = g.shapeEnd(e);
                 int stE = b.n - 1;
+                int jn = (p & 1) == 0 ? g.edgeA(e) : g.edgeB(e);
+                int prevEdge = i == k - 1 ? es : (path[i + 1] >>> 1);
+                r.addJunction(stE, choices(jn, prevEdge) >= 2, g.edgeName(e));
                 if ((p & 1) == 0) for (int j = s0; j < s1; j++) b.add(g.shapeLat(j), g.shapeLon(j));
                 else for (int j = s1 - 1; j >= s0; j--) b.add(g.shapeLat(j), g.shapeLon(j));
                 addPiece(r, stE, e, g.edgeLength(e));
@@ -375,6 +378,9 @@ public final class Router {
             double Lt = g.edgeLength(et);
             int s0 = g.shapeStart(et);
             int stT = b.n - 1;
+            if (et != (k > 0 ? (path[0] >>> 1) : es)) {
+                r.addJunction(stT, choices(endNode, k > 0 ? (path[0] >>> 1) : es) >= 2, g.edgeName(et));
+            }
             if (endNode == g.edgeA(et) && g.allowed(et, 0)) {
                 for (int i = s0; i <= s0 + t.seg; i++) b.add(g.shapeLat(i), g.shapeLon(i));
                 addPiece(r, stT, et, t.distA);
@@ -390,9 +396,19 @@ public final class Router {
         for (int i = 1; i < b.n; i++) {
             r.cumDist[i] = r.cumDist[i - 1] + GeoUtil.distance(r.lats[i - 1], r.lons[i - 1], r.lats[i], r.lons[i]);
         }
+        r.computeTurns();
         // remove zero-length steps
         for (int i = r.steps.size() - 1; i >= 0; i--) if (r.steps.get(i).meters < 1 && r.steps.size() > 1) r.steps.remove(i);
         return r;
+    }
+
+    /** number of roads a rider could take when leaving node n (not counting the road he came on) */
+    private int choices(int n, int cameOn) {
+        int c = 0;
+        for (int i = g.adjStart.get(n), z = g.adjStart.get(n + 1); i < z; i++) {
+            if ((g.adj.get(i) >>> 1) != cameOn) c++;
+        }
+        return c;
     }
 
     // ------------------------------------------------------------------ binary heap

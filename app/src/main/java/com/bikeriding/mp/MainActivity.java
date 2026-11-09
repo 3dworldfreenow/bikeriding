@@ -124,6 +124,9 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
     private int selected = 0;
     private boolean navigating, rerouting;
     private int offRouteCount, navIndex;
+    private TurnAlerts alerts;
+    private int alertTurnPoint = -1, alertStage;
+    private boolean arrivedAlerted;
 
     // ------------------------------------------------------------------ lifecycle
 
@@ -133,6 +136,7 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
         MapLibre.getInstance(this);
         prefs = getSharedPreferences("settings", MODE_PRIVATE);
         trips = new TripStore(this);
+        alerts = new TurnAlerts(this, prefs);
         satellite = prefs.getBoolean("satellite", false);
         setContentView(R.layout.activity_main);
 
@@ -370,6 +374,8 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
         stopLocation();
         TrackRecorder.get().removeListener(this);
         bg.shutdownNow();
+        alerts.release();
+        if (navigating) TrackService.stopNav(this);
         mapView.onDestroy();
         super.onDestroy();
     }
@@ -1093,8 +1099,13 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
         headingUp = false;
         offRouteCount = 0;
         navIndex = 0;
+        alertTurnPoint = -1;
+        alertStage = 0;
+        arrivedAlerted = false;
         updateLocateButton();
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        // keeps GPS + turn beeps running with the screen off / phone in pocket
+        TrackService.startNav(this);
         routePanel.setVisibility(View.GONE);
         navPanel.setVisibility(View.VISIBLE);
         drawRoutes();
@@ -1118,6 +1129,7 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
 
     private void stopRide() {
         navigating = false;
+        TrackService.stopNav(this);
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         navPanel.setVisibility(View.GONE);
         if (lc != null) {
@@ -1159,6 +1171,10 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
         if (remaining < 40 || GeoUtil.distance(lat, lon, r.lats[r.size() - 1], r.lons[r.size() - 1]) < 30) {
             navMain.setText("🏁 You have arrived!");
             navSub.setText("");
+            if (!arrivedAlerted) {
+                arrivedAlerted = true;
+                alerts.arrived();
+            }
             ui.postDelayed(() -> {
                 if (navigating) stopRide();
             }, 8000);
@@ -1168,31 +1184,49 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
         if (bestD > Math.max(60, acc * 1.5)) {
             offRouteCount++;
             if (offRouteCount >= 4) {
+                alerts.offRoute();
                 reroute(l);
                 return;
             }
         } else {
             offRouteCount = 0;
         }
-        Route.Step cur = null, next = null;
-        for (int i = 0; i < r.steps.size(); i++) {
-            Route.Step s = r.steps.get(i);
+        Route.Step cur = null;
+        for (Route.Step s : r.steps) {
             if (s.startPoint <= bestI) cur = s;
-            else if (s.name != null || next == null) {
-                next = s;
-                if (s.name != null) break;
+            else break;
+        }
+        String left = GeoUtil.formatDistance(remaining) + " · " + GeoUtil.formatDuration(remainingTime) + " left";
+        String on = "on " + (cur == null || cur.name == null ? "local road" : cur.name);
+        Route.Turn turn = r.nextTurn(done);
+        if (turn != null) {
+            double toTurn = Math.max(0, r.cumDist[turn.point] - done);
+            float speed = l.hasSpeed() ? l.getSpeed() : 8f;
+            double early = Math.min(400, Math.max(150, speed * 15));
+            double now = Math.max(40, speed * 4);
+            if (turn.point != alertTurnPoint) {
+                alertTurnPoint = turn.point;
+                alertStage = 0;
             }
+            if (toTurn <= now && alertStage < 2) {
+                playTurn(turn);
+                alertStage = 2;
+            } else if (toTurn <= early && toTurn > now && alertStage < 1) {
+                playTurn(turn);
+                alertStage = 1;
+            }
+            navMain.setText(turn.arrow() + " " + turn.text() + " in " + GeoUtil.formatDistance(toTurn));
+            navSub.setText((turn.onto != null ? "onto " + turn.onto + "\n" : "") + left + "\n" + on
+                    + (offRouteCount > 0 ? "\n⚠ Off route?" : ""));
+        } else {
+            navMain.setText("⬆ Straight on to the destination");
+            navSub.setText(left + "\n" + on + (offRouteCount > 0 ? "\n⚠ Off route?" : ""));
         }
-        navMain.setText(GeoUtil.formatDistance(remaining) + "  ·  " + GeoUtil.formatDuration(remainingTime) + " left");
-        StringBuilder sub = new StringBuilder();
-        sub.append("On: ").append(cur == null || cur.name == null ? "local road" : cur.name);
-        if (next != null) {
-            double toNext = r.cumDist[Math.min(next.startPoint, r.size() - 1)] - done;
-            sub.append("\nNext: ").append(next.name == null ? "local road" : next.name)
-                    .append(" in ").append(GeoUtil.formatDistance(Math.max(0, toNext)));
-        }
-        if (offRouteCount > 0) sub.append("\n⚠ Off route?");
-        navSub.setText(sub.toString());
+    }
+
+    private void playTurn(Route.Turn t) {
+        if (t.isRight()) alerts.right();
+        else alerts.left();
     }
 
     private void reroute(Location l) {
@@ -1420,6 +1454,10 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
                 "🛰 Save satellite for my route area (offline)",
                 "🛰 Save satellite for the visible area (offline)",
                 "🗑 Delete saved satellite",
+                "🔊 Turn beeps: " + (alerts.soundOn() ? "ON (tap to turn off)" : "OFF (tap to turn on)"),
+                "📳 Turn vibration: " + (alerts.vibrateOn() ? "ON (tap to turn off)" : "OFF (tap to turn on)"),
+                "🔔 Test LEFT turn alert (beep … beep)",
+                "🔔 Test RIGHT turn alert (beep-beep-beep)",
                 "🗺 Clear route & markers",
                 "📁 Where are my rides saved?",
                 "ℹ About & offline data",
@@ -1433,12 +1471,16 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
                 case 4:
                     OfflineSatellite.deleteAll(this, () -> Toast.makeText(this, "Saved satellite deleted", Toast.LENGTH_SHORT).show());
                     break;
-                case 5:
+                case 5: prefs.edit().putBoolean("alertSound", !alerts.soundOn()).apply(); break;
+                case 6: prefs.edit().putBoolean("alertVibrate", !alerts.vibrateOn()).apply(); break;
+                case 7: alerts.left(); break;
+                case 8: alerts.right(); break;
+                case 9:
                     clearRoute();
                     searchPt = null;
                     updatePins();
                     break;
-                case 6:
+                case 10:
                     new AlertDialog.Builder(this).setTitle("Saved rides & routes (GPX)")
                             .setMessage("Recorded rides and exported routes are saved as GPX files in:\n\nDownload/BikeRidingMP/\n\n"
                                     + "Open them in any GPX app or share on WhatsApp.")
@@ -1459,7 +1501,9 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
         if (places != null) sb.append("Searchable places: ").append(places.size()).append('\n');
         sb.append("Saved trips: ").append(trips.all().size()).append('\n');
         sb.append("\nTips: 2 fingers to rotate & tilt the map. Tap the compass to face north. "
-                + "Tap ◎ twice to make the map turn with you.\n");
+                + "Tap ◎ twice to make the map turn with you.\n"
+                + "Turn alerts while riding (phone in pocket): LEFT = beep … beep, RIGHT = beep-beep-beep "
+                + "(same pattern as vibration), once ~300 m before and again just before the turn.\n");
         sb.append("\nMap data © OpenStreetMap contributors (ODbL), © OpenMapTiles. Style: OpenFreeMap Liberty. "
                 + "Satellite: Sentinel-2 cloudless – s2maps.eu by EOX IT Services GmbH (contains modified Copernicus "
                 + "Sentinel data). Map engine: MapLibre.");

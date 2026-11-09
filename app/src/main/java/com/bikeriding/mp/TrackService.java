@@ -22,10 +22,14 @@ import android.widget.Toast;
 
 import com.bikeriding.mp.routing.GeoUtil;
 
-/** Foreground service so the ride keeps recording with the screen off. GPS only – works fully offline. */
+/**
+ * Foreground service so the ride keeps going with the screen off: GPX recording and/or
+ * navigation with turn beeps (phone in pocket). GPS only – works fully offline.
+ */
 public class TrackService extends Service implements LocationListener, TrackRecorder.Listener {
     private static final String TAG = "TrackService";
-    public static final String ACTION_START = "start", ACTION_STOP = "stop";
+    public static final String ACTION_START = "start", ACTION_STOP = "stop", ACTION_NAV_ON = "navOn", ACTION_NAV_OFF = "navOff";
+    private static boolean navActive;
     private static final String CHANNEL = "ride";
     private static final int NOTIF_ID = 7;
     private LocationManager lm;
@@ -41,29 +45,67 @@ public class TrackService extends Service implements LocationListener, TrackReco
         c.startService(new Intent(c, TrackService.class).setAction(ACTION_STOP));
     }
 
+    /** keep the app alive for turn alerts while riding with the screen off */
+    public static void startNav(Context c) {
+        Intent i = new Intent(c, TrackService.class).setAction(ACTION_NAV_ON);
+        if (Build.VERSION.SDK_INT >= 26) c.startForegroundService(i);
+        else c.startService(i);
+    }
+
+    public static void stopNav(Context c) {
+        c.startService(new Intent(c, TrackService.class).setAction(ACTION_NAV_OFF));
+    }
+
+    private String statusText() {
+        if (TrackRecorder.get().isRecording()) return "Recording your ride…";
+        return "Ride navigation on – turn beeps & vibration";
+    }
+
+    private void goForeground() {
+        Notification n = buildNotification(statusText());
+        if (Build.VERSION.SDK_INT >= 29) {
+            startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
+        } else {
+            startForeground(NOTIF_ID, n);
+        }
+    }
+
+    private void stopIfIdle() {
+        if (!navActive && !TrackRecorder.get().isRecording()) {
+            stopForegroundCompat();
+            stopSelf();
+        } else {
+            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            nm.notify(NOTIF_ID, buildNotification(statusText()));
+        }
+    }
+
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? ACTION_START : intent.getAction();
         if (ACTION_STOP.equals(action)) {
             String where = TrackRecorder.get().stop(this);
             if (where != null) Toast.makeText(this, "Ride saved: " + where, Toast.LENGTH_LONG).show();
-            stopForegroundCompat();
-            stopSelf();
+            if (lm != null) lm.removeUpdates(this);
+            stopIfIdle();
             return START_NOT_STICKY;
         }
-        Notification n = buildNotification("Recording your ride…");
-        if (Build.VERSION.SDK_INT >= 29) {
-            startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION);
-        } else {
-            startForeground(NOTIF_ID, n);
+        if (ACTION_NAV_OFF.equals(action)) {
+            navActive = false;
+            stopIfIdle();
+            return START_NOT_STICKY;
+        }
+        goForeground();
+        if (ACTION_NAV_ON.equals(action)) {
+            navActive = true;
+            return START_NOT_STICKY;
         }
         try {
             TrackRecorder.get().start(this);
         } catch (Exception e) {
             Log.e(TAG, "start failed", e);
             Toast.makeText(this, "Cannot record: " + e.getMessage(), Toast.LENGTH_LONG).show();
-            stopForegroundCompat();
-            stopSelf();
+            stopIfIdle();
             return START_NOT_STICKY;
         }
         TrackRecorder.get().addListener(this);
@@ -71,6 +113,7 @@ public class TrackService extends Service implements LocationListener, TrackReco
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
             lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000, 0, this, Looper.getMainLooper());
         }
+        goForeground();
         return START_NOT_STICKY;
     }
 
@@ -102,7 +145,8 @@ public class TrackService extends Service implements LocationListener, TrackReco
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setContentIntent(open)
-                .addAction(new Notification.Action.Builder(null, "Stop & save", stop).build());
+                ;
+        if (TrackRecorder.get().isRecording()) b.addAction(new Notification.Action.Builder(null, "Stop & save", stop).build());
         return b.build();
     }
 
@@ -137,6 +181,7 @@ public class TrackService extends Service implements LocationListener, TrackReco
 
     @Override
     public void onDestroy() {
+        navActive = false;
         TrackRecorder.get().removeListener(this);
         if (lm != null) lm.removeUpdates(this);
         if (TrackRecorder.get().isRecording()) TrackRecorder.get().stop(this);

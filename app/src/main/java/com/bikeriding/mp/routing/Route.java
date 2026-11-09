@@ -21,7 +21,35 @@ public final class Route {
         }
     }
 
+    /** A turn the rider must make (for screen + sound/vibration alerts). */
+    public static final class Turn {
+        public int point;        // index into lats/lons of the junction
+        public double angle;     // degrees, + = right, - = left
+        public String onto;      // road name after the turn, may be null
+
+        public boolean isRight() {
+            return angle > 0;
+        }
+
+        public String arrow() {
+            double a = Math.abs(angle);
+            if (a > 135) return angle > 0 ? "↷" : "↶";
+            return angle > 0 ? "↱" : "↰";
+        }
+
+        public String text() {
+            double a = Math.abs(angle);
+            String side = angle > 0 ? "right" : "left";
+            String how = a > 135 ? "U-turn " : a > 100 ? "Sharp " : a < 50 ? "Slight " : "Turn ";
+            return how + side;
+        }
+    }
+
     public final RouteOptions options;
+    public final List<Turn> turns = new ArrayList<>();
+    // junctions recorded while building: point index, whether there was a real choice, road name after it
+    private final List<int[]> junctions = new ArrayList<>();
+    private final List<String> junctionNames = new ArrayList<>();
     public double[] lats = new double[0], lons = new double[0];
     /** cumulative distance from start at each point, metres */
     public double[] cumDist = new double[0];
@@ -70,6 +98,54 @@ public final class Route {
         return sb.toString();
     }
 
+    void addJunction(int pointIndex, boolean choice, String onto) {
+        junctions.add(new int[]{pointIndex, choice ? 1 : 0});
+        junctionNames.add(onto);
+    }
+
+    private int pointAtDistance(int from, double meters, int dir) {
+        int i = from;
+        while (i + dir >= 0 && i + dir < lats.length && Math.abs(cumDist[i + dir] - cumDist[from]) < meters) i += dir;
+        if (i + dir >= 0 && i + dir < lats.length) i += dir;
+        return i;
+    }
+
+    private static double bearing(double lat1, double lon1, double lat2, double lon2) {
+        double p1 = Math.toRadians(lat1), p2 = Math.toRadians(lat2), dl = Math.toRadians(lon2 - lon1);
+        double y = Math.sin(dl) * Math.cos(p2);
+        double x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+        return Math.toDegrees(Math.atan2(y, x));
+    }
+
+    /** Turns = junctions with a real choice where the direction changes by 35° or more. */
+    void computeTurns() {
+        turns.clear();
+        for (int k = 0; k < junctions.size(); k++) {
+            int idx = junctions.get(k)[0];
+            boolean choice = junctions.get(k)[1] == 1;
+            if (!choice || idx <= 0 || idx >= lats.length - 1) continue;
+            int a = pointAtDistance(idx, 25, -1), b = pointAtDistance(idx, 25, +1);
+            if (a == idx || b == idx) continue;
+            double in = bearing(lats[a], lons[a], lats[idx], lons[idx]);
+            double out = bearing(lats[idx], lons[idx], lats[b], lons[b]);
+            double d = ((out - in + 540) % 360) - 180;
+            if (Math.abs(d) < 35) continue;
+            Turn t = new Turn();
+            t.point = idx;
+            t.angle = d;
+            t.onto = junctionNames.get(k);
+            // merge with a turn a few metres before (double junctions)
+            if (!turns.isEmpty() && cumDist[idx] - cumDist[turns.get(turns.size() - 1).point] < 15) continue;
+            turns.add(t);
+        }
+    }
+
+    /** Next turn at or after distance-along-route `done` (metres), or null. */
+    public Turn nextTurn(double done) {
+        for (Turn t : turns) if (cumDist[t.point] >= done - 5) return t;
+        return null;
+    }
+
     /** Joins legs (start→via→…→end) into one route. */
     static Route join(RouteOptions o, List<Route> legs) {
         Route r = new Route(o);
@@ -84,6 +160,10 @@ public final class Route {
             for (Step s : l.steps) {
                 s.startPoint += k;
                 r.steps.add(s);
+            }
+            for (Turn t : l.turns) {
+                t.point += k;
+                r.turns.add(t);
             }
             for (int i = 0; i < l.size(); i++) {
                 r.lats[k] = l.lats[i];
