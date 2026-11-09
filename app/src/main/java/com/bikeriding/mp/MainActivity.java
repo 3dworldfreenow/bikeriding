@@ -181,13 +181,14 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
             String error = null;
             try {
                 map = DataStore.prepareMap(this, p -> ui.post(() ->
-                        loadingText.setText("Preparing offline map of Madhya Pradesh…\n(first start only) " + p + "%")));
+                        loadingText.setText("Unpacking offline map of Madhya Pradesh…\n(first start only)\n" + p + " MB")));
             } catch (Exception e) {
                 Log.e(TAG, "map", e);
                 error = "Map error: " + e.getMessage();
             }
             try {
-                Graph g = DataStore.openGraph(this);
+                Graph g = DataStore.openGraph(this, p -> ui.post(() ->
+                        loadingText.setText("Unpacking road network for trip planning…\n(first start only)\n" + p + " MB")));
                 if (g != null) router = new Router(g);
             } catch (Exception e) {
                 Log.e(TAG, "graph", e);

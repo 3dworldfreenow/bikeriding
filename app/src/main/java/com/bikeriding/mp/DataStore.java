@@ -1,7 +1,6 @@
 package com.bikeriding.mp;
 
 import android.content.Context;
-import android.content.res.AssetFileDescriptor;
 import android.util.Log;
 
 import com.bikeriding.mp.routing.Graph;
@@ -51,71 +50,51 @@ public final class DataStore {
     }
 
     /**
-     * The map file must be a real file for mapsforge, so it is copied out of the APK once
-     * (and again whenever a newer APK brings newer data).
+     * Data files are stored compressed inside the APK (smaller download) and unpacked once
+     * on first start, and again whenever a newer APK brings newer data.
      */
-    public static File prepareMap(Context c, Progress progress) throws IOException {
+    private static File unpack(Context c, String asset, Progress progress) throws IOException {
         File dir = new File(c.getFilesDir(), "maps");
         if (!dir.exists() && !dir.mkdirs()) throw new IOException("cannot create " + dir);
-        File out = new File(dir, MAP_ASSET);
-        File stamp = new File(dir, MAP_ASSET + ".version");
+        File out = new File(dir, asset);
+        File stamp = new File(dir, asset + ".version");
         String version = assetVersion(c);
-        if (out.exists() && version.equals(readText(stamp))) return out;
-        if (!hasAsset(c, MAP_ASSET)) {
-            // a map file put there manually (developer build without assets)
+        if (!hasAsset(c, asset)) {
+            // developer build without assets: use a file put there manually
             return out.exists() ? out : null;
         }
-        long total = -1;
-        try (AssetFileDescriptor afd = c.getAssets().openFd(MAP_ASSET)) {
-            total = afd.getLength();
-        } catch (IOException ignored) {
-            // compressed asset: size unknown
-        }
-        File tmp = new File(dir, MAP_ASSET + ".tmp");
-        try (InputStream in = c.getAssets().open(MAP_ASSET); OutputStream os = new FileOutputStream(tmp)) {
+        if (out.exists() && version.equals(readText(stamp))) return out;
+        File tmp = new File(dir, asset + ".tmp");
+        try (InputStream in = c.getAssets().open(asset); OutputStream os = new FileOutputStream(tmp)) {
             byte[] buf = new byte[1 << 20];
             long done = 0;
-            int n, last = -1;
+            int n;
+            long lastMb = -1;
             while ((n = in.read(buf)) > 0) {
                 os.write(buf, 0, n);
                 done += n;
-                if (total > 0 && progress != null) {
-                    int p = (int) (done * 100 / total);
-                    if (p != last) progress.onProgress(last = p);
-                }
+                long mb = done >> 20;
+                if (progress != null && mb != lastMb) progress.onProgress((int) (lastMb = mb));
             }
+        } catch (IOException e) {
+            if (!tmp.delete()) Log.w(TAG, "could not delete " + tmp);
+            throw e;
         }
-        if (out.exists() && !out.delete()) Log.w(TAG, "could not delete old map");
-        if (!tmp.renameTo(out)) throw new IOException("cannot move map file");
+        if (out.exists() && !out.delete()) Log.w(TAG, "could not delete old " + out);
+        if (!tmp.renameTo(out)) throw new IOException("cannot move " + asset);
         writeText(stamp, version);
         return out;
     }
 
-    /** Memory-maps the routing graph straight out of the APK (it is stored uncompressed). */
-    public static Graph openGraph(Context c) throws IOException {
-        File manual = new File(c.getFilesDir(), "maps/" + GRAPH_ASSET);
-        if (!hasAsset(c, GRAPH_ASSET)) {
-            return manual.exists() ? Graph.open(manual) : null;
-        }
-        try {
-            AssetFileDescriptor afd = c.getAssets().openFd(GRAPH_ASSET);
-            FileInputStream in = new FileInputStream(afd.getFileDescriptor());
-            Graph g = Graph.open(in, afd.getStartOffset(), afd.getLength());
-            in.close();
-            afd.close();
-            return g; // the mapping stays valid after closing the file
-        } catch (IOException e) {
-            Log.w(TAG, "graph asset is compressed, copying it out", e);
-        }
-        File out = new File(c.getFilesDir(), "maps/" + GRAPH_ASSET);
-        File parent = out.getParentFile();
-        if (parent != null && !parent.exists() && !parent.mkdirs()) throw new IOException("mkdir failed");
-        try (InputStream in = c.getAssets().open(GRAPH_ASSET); OutputStream os = new FileOutputStream(out)) {
-            byte[] buf = new byte[1 << 20];
-            int n;
-            while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
-        }
-        return Graph.open(out);
+    /** Vector map file (progress = MB unpacked so far). */
+    public static File prepareMap(Context c, Progress progress) throws IOException {
+        return unpack(c, MAP_ASSET, progress);
+    }
+
+    /** Routing graph, memory-mapped from the unpacked file. */
+    public static Graph openGraph(Context c, Progress progress) throws IOException {
+        File f = unpack(c, GRAPH_ASSET, progress);
+        return f == null ? null : Graph.open(f);
     }
 
     public static PlacesIndex openPlaces(Context c) throws IOException {

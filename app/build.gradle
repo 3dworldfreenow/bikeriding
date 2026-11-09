@@ -42,11 +42,6 @@ android {
         targetCompatibility JavaVersion.VERSION_11
     }
 
-    // map + graph must stay uncompressed: the graph is memory-mapped straight out of the APK
-    androidResources {
-        noCompress 'map', 'graph'
-    }
-
     packaging {
         resources {
             excludes += ['META-INF/LICENSE*', 'META-INF/NOTICE*']
