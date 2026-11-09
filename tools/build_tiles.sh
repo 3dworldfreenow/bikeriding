@@ -13,11 +13,20 @@ cd "$WORK"
 [ -s planetiler.jar ] || curl -fL --retry 3 -o planetiler.jar \
   https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
 IFS=, read -r a b c d <<< "$BBOX"
-java -Xmx"$JAVA_HEAP" -jar planetiler.jar openmaptiles \
-  --osm-path="$PBF" --download --download-dir="$WORK/sources" \
-  --bounds="$b,$a,$d,$c" --maxzoom=14 \
-  --exclude-layers=housenumber \
-  --output="$WORK/mp.pmtiles" --force
+ok=0
+for attempt in 1 2 3 4; do
+  # --download fetches water polygons / natural earth / lake lines (kept in sources/ between attempts)
+  if java -Xmx"$JAVA_HEAP" -jar planetiler.jar openmaptiles \
+      --osm-path="$PBF" --download --download-dir="$WORK/sources" \
+      --http-retries=5 --http-timeout=180s \
+      --bounds="$b,$a,$d,$c" --maxzoom=14 \
+      --exclude-layers=housenumber \
+      --output="$WORK/mp.pmtiles" --force; then
+    ok=1; break
+  fi
+  echo "planetiler failed (attempt $attempt), retrying in 60 s"; sleep 60
+done
+[ "$ok" = 1 ] || { echo "planetiler failed"; exit 1; }
 ls -lh mp.pmtiles
 cp mp.pmtiles "$OUT/mp.pmtiles"
 

@@ -357,11 +357,17 @@ def build_graph(rc, cell_deg=0.01, keep_largest_component=True, log=print, urban
         consecutive = (seg_from[1:] == seg_from[:-1] + 1) & (seg_edge[1:] == seg_edge[:-1]) \
             & (seglen[1:] > 3) & (seglen[:-1] > 3)
         turn = np.abs((head[1:] - head[:-1] + 180.0) % 360.0 - 180.0)
-        turn = np.where(consecutive, turn, 0.0)
+        # ignore tiny kinks (mapping noise) and count only real bends
+        turn = np.where(consecutive & (turn >= 8.0), turn, 0.0)
         total = np.bincount(seg_edge[1:], weights=turn, minlength=E)
-        per_km = total / np.maximum(elen.astype(np.float64) / 1000.0, 0.3)
+        # short edges (city blocks, junction stubs) can't be "twisty roads"
+        per_km = total / np.maximum(elen.astype(np.float64) / 1000.0, 1.0)
         curv = np.minimum(255, per_km / 2.0).astype(np.uint8)
-    log(f'curvy edges (>60 deg/km): {int((curv > 30).sum())}')
+    if E:
+        dpk = curv.astype(np.int32) * 2
+        w8 = elen.astype(np.float64)
+        log('curviness (deg/km) by road length: ' + ', '.join(
+            f'>={t}: {w8[dpk >= t].sum() / max(w8.sum(), 1) * 100:.0f}%' for t in (30, 60, 100, 150, 250)))
 
     return dict(N=N, E=E, S=S, node_lat=node_lat, node_lon=node_lon, adj_start=adj_start, adj=adj,
                 A=A.astype(np.int32), B=B.astype(np.int32), elen=elen, ename=ename.astype(np.int32),
