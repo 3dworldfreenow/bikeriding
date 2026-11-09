@@ -100,8 +100,15 @@ jobs:
           ls -lh app/src/main/assets
           ./gradlew --no-daemon testDebugUnitTest assembleRelease
           mkdir -p dist
-          cp app/build/outputs/apk/release/app-release.apk "dist/BikeRidingMP-$(cat app/src/main/assets/data_version.txt | cut -c1-8).apk"
-          ls -lh dist
+          NAME="BikeRidingMP-$(cat app/src/main/assets/data_version.txt | cut -c1-8)"
+          cp app/build/outputs/apk/release/app-release.apk "dist/$NAME.apk"
+          cd dist
+          # same APK as one .zip (for phones/browsers that block .apk downloads)
+          zip -9 -j "$NAME.zip" "$NAME.apk"
+          # and split into 50 MB parts for slow connections (open the .zip part with ZArchiver)
+          mkdir -p parts
+          zip -9 -s 50m "parts/$NAME-parts.zip" "$NAME.apk"
+          ls -lh . parts
 
       - uses: actions/upload-artifact@v4
         with:
@@ -118,6 +125,13 @@ jobs:
           make_latest: true
           body: |
             Offline map + routing + search for Madhya Pradesh, all inside the APK.
-            Install: download the .apk below on your phone and open it (allow "Install unknown apps").
+
+            **Download one of these:**
+            - `.apk` – open it on the phone and install (allow "Install unknown apps").
+            - `.zip` – same APK zipped, if your phone/browser stops the .apk download. Open it in the Files app, extract, then tap the .apk.
+            - `-parts.z01`, `-parts.z02`, … + `-parts.zip` – small 50 MB pieces for slow internet. Download ALL pieces into the same folder, open the `-parts.zip` with ZArchiver → Extract, then tap the .apk.
             Map data © OpenStreetMap contributors (ODbL).
-          files: dist/*.apk
+          files: |
+            dist/*.apk
+            dist/*.zip
+            dist/parts/*
