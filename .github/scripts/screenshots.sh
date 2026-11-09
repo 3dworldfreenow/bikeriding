@@ -55,7 +55,7 @@ tap_text "Search village"
 sleep 3
 adb shell input text Indore
 shot 03_search 6
-tap_text "Indore"
+tap_text "City ·"
 shot 04_place 4
 tap_text "Route here"
 shot 05_routes_nh_vs_no_nh 30
@@ -66,7 +66,7 @@ adb shell input keyevent KEYCODE_BACK
 
 tap_text "Start ride"
 sleep 3
-tap_text "No" || true
+adb shell input keyevent KEYCODE_BACK
 shot 07_ride_mode 15
 
 # long-press menu
