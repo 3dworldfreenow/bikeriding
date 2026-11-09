@@ -4,10 +4,25 @@ set -x
 APK="$1"; OUT="$2"; mkdir -p "$OUT"
 PKG=com.bikeriding.mp
 
-shot() { sleep "${2:-3}"; adb exec-out screencap -p > "$OUT/$1.png"; ls -l "$OUT/$1.png"; }
+# close "System UI / Launcher isn't responding" popups of the slow emulator
+dismiss_anr() {
+  for k in 1 2 3; do
+    adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; adb pull /sdcard/ui.xml /tmp/ui.xml >/dev/null 2>&1
+    grep -q "responding" /tmp/ui.xml || return 0
+    xy=$(python3 -c "
+import re,xml.etree.ElementTree as E
+for n in E.parse('/tmp/ui.xml').iter('node'):
+    if (n.get('text') or '')=='Wait':
+        a,b,c,d=map(int,re.findall(r'\\d+',n.get('bounds'))); print((a+c)//2,(b+d)//2); break")
+    [ -n "$xy" ] && adb shell input tap $xy
+    sleep 2
+  done
+}
+shot() { sleep "${2:-3}"; dismiss_anr; adb exec-out screencap -p > "$OUT/$1.png"; ls -l "$OUT/$1.png"; }
 
 # tap the first on-screen element whose text contains $1 (case-insensitive)
 tap_text() {
+  dismiss_anr
   for i in 1 2 3 4 5 6; do
     adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1
     adb pull /sdcard/ui.xml /tmp/ui.xml >/dev/null 2>&1
@@ -30,6 +45,9 @@ P
 
 adb shell cmd location set-location-enabled true || adb shell settings put secure location_mode 3
 adb install -r -g "$APK" || exit 1
+# stop the heavy launcher so it can't freeze over our app, let the system settle
+adb shell pm disable-user --user 0 com.google.android.apps.nexuslauncher || true
+sleep 20
 adb shell pm grant $PKG android.permission.POST_NOTIFICATIONS || true
 
 # keep feeding a GPS fix at Bhopal (New Market)
