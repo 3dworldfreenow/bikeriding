@@ -13,20 +13,32 @@ cd "$WORK"
 [ -s planetiler.jar ] || curl -fL --retry 3 -o planetiler.jar \
   https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
 IFS=, read -r a b c d <<< "$BBOX"
-ok=0
-for attempt in 1 2 3 4; do
-  # --download fetches water polygons / natural earth / lake lines (kept in sources/ between attempts)
-  if java -Xmx"$JAVA_HEAP" -jar planetiler.jar openmaptiles \
-      --osm-path="$PBF" --download --download-dir="$WORK/sources" \
-      --http-retries=5 --http-timeout=180s \
-      --bounds="$b,$a,$d,$c" --maxzoom=14 \
-      --exclude-layers=housenumber \
-      --output="$WORK/mp.pmtiles" --force; then
-    ok=1; break
+# Global helper sources, fetched with curl (planetiler's own downloader times out on slow servers).
+# Madhya Pradesh is inland, so if the ocean / lake-line servers are down a placeholder is fine.
+SRC="$WORK/sources"; mkdir -p "$SRC"
+fetch() {  # url file [placeholder-kind]
+  [ -s "$SRC/$2" ] && return 0
+  if curl -fL --retry 4 --retry-delay 20 --connect-timeout 60 --max-time 1500 -o "$SRC/$2.part" "$1"; then
+    mv "$SRC/$2.part" "$SRC/$2"
+  elif [ -n "${3:-}" ]; then
+    python3 "$ROOT/tools/dummy_shapefile.py" "$3" "$SRC/$2"
+  else
+    echo "download failed: $1"; return 1
   fi
-  echo "planetiler failed (attempt $attempt), retrying in 60 s"; sleep 60
-done
-[ "$ok" = 1 ] || { echo "planetiler failed"; exit 1; }
+}
+fetch https://osmdata.openstreetmap.de/download/water-polygons-split-3857.zip water-polygons-split-3857.zip polygon
+fetch https://github.com/acalcutt/osm-lakelines/releases/download/v12/lake_centerline.shp.zip lake_centerline.shp.zip line
+fetch https://naciscdn.org/naturalearth/packages/natural_earth_vector.sqlite.zip natural_earth_vector.sqlite.zip
+ls -lh "$SRC"
+
+java -Xmx"$JAVA_HEAP" -jar planetiler.jar openmaptiles \
+  --osm-path="$PBF" --download-dir="$SRC" \
+  --water-polygons-path="$SRC/water-polygons-split-3857.zip" \
+  --natural-earth-path="$SRC/natural_earth_vector.sqlite.zip" \
+  --lake-centerlines-path="$SRC/lake_centerline.shp.zip" \
+  --bounds="$b,$a,$d,$c" --maxzoom=14 \
+  --exclude-layers=housenumber \
+  --output="$WORK/mp.pmtiles" --force
 ls -lh mp.pmtiles
 cp mp.pmtiles "$OUT/mp.pmtiles"
 

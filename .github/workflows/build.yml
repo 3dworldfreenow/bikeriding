@@ -91,7 +91,7 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q osmium-tool
-          pip install osmium numpy
+          pip install osmium numpy pyshp
 
       - name: Build Madhya Pradesh offline data
         if: steps.parts.outputs.parts != ''
