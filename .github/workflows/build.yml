@@ -3,6 +3,10 @@ name: Build offline APK
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - .github/scripts/**
+      - .github/workflows/screenshots.yml
+      - docs/**
   workflow_dispatch:
     inputs:
       rebuild_data:
