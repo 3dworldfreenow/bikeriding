@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Runs the real APK on an emulator and takes screenshots (used by .github/workflows/screenshots.yml)
+# (re-run against the latest release)
 set -x
 APK="$1"; OUT="$2"; mkdir -p "$OUT"
 PKG=com.bikeriding.mp
