@@ -601,13 +601,10 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
         } else {
             follow = true;
         }
-        if (lc != null) {
-            lc.setCameraMode(navigating ? CameraMode.TRACKING_GPS : headingUp ? CameraMode.TRACKING_COMPASS : CameraMode.TRACKING);
-            if (!headingUp && !navigating && map != null) {
-                CameraPosition c = map.getCameraPosition();
-                map.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition.Builder(c)
-                        .bearing(0).tilt(0).zoom(Math.max(c.zoom, 15)).build()), 600);
-            }
+        if (lc != null && map != null) {
+            int mode = navigating ? CameraMode.TRACKING_GPS : headingUp ? CameraMode.TRACKING_COMPASS : CameraMode.TRACKING;
+            double zoom = Math.max(map.getCameraPosition().zoom, navigating ? 16.5 : 15);
+            lc.setCameraMode(mode, 700, zoom, headingUp || navigating ? null : 0.0, navigating ? 45.0 : 0.0, null);
         }
         updateLocateButton();
     }
@@ -1112,10 +1109,9 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
         navMain.setText("Ride started");
         navSub.setText(myLoc == null ? "Waiting for GPS…" : "");
         if (lc != null) {
-            lc.setCameraMode(CameraMode.TRACKING_GPS);
             lc.setRenderMode(RenderMode.GPS);
-            lc.zoomWhileTracking(16.5);
-            lc.tiltWhileTracking(45);
+            // close-up, tilted, map turns with the riding direction
+            lc.setCameraMode(CameraMode.TRACKING_GPS, 900, 16.5, null, 45.0, null);
         }
         if (myLoc != null) updateNavigation(myLoc);
         navPanel.setOnClickListener(v -> new AlertDialog.Builder(this).setMessage("Stop the ride navigation?")

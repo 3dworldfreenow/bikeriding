@@ -126,8 +126,8 @@ shot 08_ride_mode 15
 
 adb shell input keyevent KEYCODE_BACK
 sleep 2
-tap_text "Stop" || true
-sleep 2
+tap_exact "Stop" || true
+sleep 3
 tap_text "⋮"
 sleep 2
 tap_text "My saved trips"
