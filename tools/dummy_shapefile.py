@@ -10,15 +10,18 @@ import zipfile
 import shapefile  # pip install pyshp
 
 
+WGS84_PRJ = ('GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",SPHEROID["WGS_1984",6378137,298.257223563]],'
+             'PRIMEM["Greenwich",0],UNIT["Degree",0.017453292519943295]]')
+
+
 def main():
     kind, out = sys.argv[1], sys.argv[2]
     shp, shx, dbf = io.BytesIO(), io.BytesIO(), io.BytesIO()
     if kind == 'polygon':
         w = shapefile.Writer(shp=shp, shx=shx, dbf=dbf, shapeType=shapefile.POLYGON)
         w.field('x', 'N')
-        # tiny square near the south-west corner of web mercator (EPSG:3857)
-        w.poly([[(-20000000, -19000000), (-19999000, -19000000), (-19999000, -18999000),
-                 (-20000000, -18999000), (-20000000, -19000000)]])
+        # tiny square in Antarctica (lon/lat, WGS84)
+        w.poly([[(-179.9, -80.0), (-179.8, -80.0), (-179.8, -79.9), (-179.9, -79.9), (-179.9, -80.0)]])
         w.record(0)
         name = 'water_polygons'
     else:
@@ -32,6 +35,7 @@ def main():
         z.writestr(name + '.shp', shp.getvalue())
         z.writestr(name + '.shx', shx.getvalue())
         z.writestr(name + '.dbf', dbf.getvalue())
+        z.writestr(name + '.prj', WGS84_PRJ)
     print('wrote placeholder', out)
 
 
