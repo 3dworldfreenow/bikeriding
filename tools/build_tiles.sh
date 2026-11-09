@@ -37,9 +37,20 @@ java -Xmx"$JAVA_HEAP" -jar planetiler.jar openmaptiles \
   --natural-earth-path="$SRC/natural_earth_vector.sqlite.zip" \
   --lake-centerlines-path="$SRC/lake_centerline.shp.zip" \
   --bounds="$b,$a,$d,$c" --maxzoom=14 \
-  --exclude-layers=housenumber \
+  --exclude-layers=housenumber,building \
   --output="$WORK/mp.pmtiles" --force
 ls -lh mp.pmtiles
+# size per layer (to keep the APK small)
+python3 - <<'PY' || true
+import csv, gzip, collections
+tot = collections.Counter()
+with gzip.open('mp.pmtiles.layerstats.tsv.gz', 'rt') as f:
+    r = csv.DictReader(f, delimiter='\t')
+    for row in r:
+        tot[row.get('layer', '?')] += int(row.get('layer_bytes') or 0)
+for k, v in tot.most_common():
+    print(f'{k:20s} {v / 1048576:8.1f} MB')
+PY
 cp mp.pmtiles "$OUT/mp.pmtiles"
 
 # 2. style (OpenFreeMap Liberty, made offline)

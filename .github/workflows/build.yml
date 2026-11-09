@@ -143,7 +143,11 @@ jobs:
           ./gradlew --no-daemon testDebugUnitTest assembleRelease
           mkdir -p dist
           NAME="BikeRidingMP-$(cat app/src/main/assets/data_version.txt | cut -c1-8)"
-          cp app/build/outputs/apk/release/app-release.apk "dist/$NAME.apk"
+          OUTD=app/build/outputs/apk/release
+          ls -lh $OUTD
+          cp $OUTD/app-arm64-v8a-release.apk "dist/$NAME.apk"
+          cp $OUTD/app-armeabi-v7a-release.apk "dist/$NAME-old-32bit-phones.apk"
+          cp $OUTD/app-x86_64-release.apk "dist/$NAME-emulator-x86_64.apk"
           cd dist
           # same APK as one .zip (for phones/browsers that block .apk downloads)
           zip -9 -j "$NAME.zip" "$NAME.apk"
@@ -169,7 +173,9 @@ jobs:
             Offline map + routing + search for Madhya Pradesh, all inside the APK (satellite view needs internet or a saved area).
 
             **Download one of these:**
-            - `.apk` – open it on the phone and install (allow "Install unknown apps").
+            - `BikeRidingMP-xxxx.apk` – **for almost all phones** (64-bit). Open it on the phone and install (allow "Install unknown apps").
+            - `…-old-32bit-phones.apk` – only if the normal one says "App not installed" on a very old phone.
+            - `…-emulator-x86_64.apk` – for PC emulators only.
             - `.zip` – same APK zipped, if your phone/browser stops the .apk download. Open it in the Files app, extract, then tap the .apk.
             - `-parts.z01`, `-parts.z02`, … + `-parts.zip` – small 50 MB pieces for slow internet. Download ALL pieces into the same folder, open the `-parts.zip` with ZArchiver → Extract, then tap the .apk.
             Map data © OpenStreetMap contributors (ODbL).
