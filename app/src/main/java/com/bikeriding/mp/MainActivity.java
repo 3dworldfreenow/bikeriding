@@ -1290,7 +1290,7 @@ public class MainActivity extends Activity implements LocationListener, TrackRec
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(12), dp(8), dp(12), 0);
         EditText input = new EditText(this);
-        input.setHint("Village, town, place… (English or हिंदी)");
+        input.setHint("Village, town, place…");
         input.setSingleLine(true);
         input.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
         box.addView(input);

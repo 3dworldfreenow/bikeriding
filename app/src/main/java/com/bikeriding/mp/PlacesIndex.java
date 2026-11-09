@@ -29,10 +29,9 @@ public final class PlacesIndex {
             this.extra = extra;
         }
 
+        /** English name (Hindi only if the place has no English name at all). */
         public String title() {
-            if (name.isEmpty()) return nameHi;
-            if (nameHi.isEmpty() || nameHi.equals(name)) return name;
-            return name + " (" + nameHi + ")";
+            return name.isEmpty() ? nameHi : name;
         }
 
         public String label() {

@@ -17,7 +17,7 @@ Everything is **inside the APK**, so after you install it you need **no internet
 | 💾 Saved trips | Save plans, open / rename / delete them, start a ride from a saved trip, export the route as GPX |
 | ▶ Ride mode | Map turns with you (3D tilt), distance & time left, current & next road, auto re-route |
 | ⏺ Ride recording | GPX track (works with screen off), saved to `Download/BikeRidingMP/` |
-| 🔍 Offline search | Cities, towns, villages (English or हिंदी) + nearest petrol pump, hospital, bike repair, police, ATM, food, hotels, sights, forts, waterfalls |
+| 🔍 Offline search | Cities, towns, villages + nearest petrol pump, hospital, bike repair, police, ATM, food, hotels, sights, forts, waterfalls |
 
 ## Get the APK
 
